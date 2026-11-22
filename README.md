@@ -15,6 +15,9 @@ Pork is not affiliated with AdaCore or the SPARK project.
 | **Pork Bronze** | A Stone function satisfies its declared data-flow requirements. Use `PORK_DEPENDS` to specify which inputs an output may depend on. [Specification](spec/3_bronze.txt) |
 | **Pork Silver** | Pork translates the function to C and checks for runtime errors such as division by zero, signed overflow, and out-of-bounds access. The proof depends on the translation, the function's preconditions, and any reported assumptions. A failed Bronze requirement or an execution that can exceed the unwinding limit prevents a Silver verdict. [Specification](spec/2_silver.txt) |
 
+What each verdict promises, and how that promise is tested, is described in
+[Verification confidence](docs/verification-confidence.md).
+
 ## Build
 
 You need CMake 3.28 or later, Ninja for the commands below, a C++23 compiler,
