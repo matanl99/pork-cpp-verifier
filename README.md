@@ -55,19 +55,26 @@ Save this as `example.cpp` in the Pork repository:
 ```cpp
 #include <pork/annotations.hpp>
 
-int ratio(int x) {
+int ratio(int x, int log_level) {
   PORK_PRE(x > 0);
+  PORK_DEPENDS_RESULT(x);
   return 100 / x;
 }
 ```
 
 ```sh
-./build/pork example.cpp -- -std=c++17 -Iinclude
-./build/pork --silver example.cpp -- -std=c++17 -Iinclude
+./build/pork example.cpp -- -std=c++20 -Iinclude
+./build/pork --silver example.cpp -- -std=c++20 -Iinclude
 ```
 
-The first command reports `ratio: stone`. The second reports
-`ratio: silver`. The precondition rules out division by zero.
+The first command reports `ratio: bronze`. The function is Stone, and its
+result depends only on `x`, as `PORK_DEPENDS_RESULT` requires. The second
+reports `ratio: silver`. The precondition rules out division by zero.
+
+Change the return statement to `return 100 / x + log_level;` and run the
+first command again. Pork reports `ratio: stone: not bronze: the result
+depends on log_level, which PORK_DEPENDS does not allow` and exits with
+status 1.
 
 Flags after `--` apply to the source being analyzed. Use the C++ standard
 your source actually builds with. In particular, `PORK_DEPENDS` uses
@@ -151,7 +158,7 @@ error. To inspect the exact C input sent to the prover, run the quick-start
 example with `--keep-c`:
 
 ```sh
-./build/pork --silver --keep-c build/proof-inputs example.cpp -- -std=c++17 -Iinclude
+./build/pork --silver --keep-c build/proof-inputs example.cpp -- -std=c++20 -Iinclude
 ```
 
 This keeps numbered files such as `build/proof-inputs/silver_1.c`. Use them
