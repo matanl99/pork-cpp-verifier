@@ -89,6 +89,25 @@ relevant source files to cover the whole project. Add `--flow` to show
 inferred dependencies or `--silver` to check for runtime errors. Run
 `./build/pork --help` from the Pork repository for more options.
 
+## Use as a check for AI-generated code
+
+Pork can serve as a rule-based check for code written by an AI coding
+assistant. Its verdicts are machine-readable, one line per function with a
+reason, and `PORK_STONE` and `PORK_DEPENDS` turn them into requirements: Pork
+exits with status 1 when a marked function is not Stone or breaks its
+declared data flow. An assistant can run Pork after each change and revise
+the code until the requirements hold. Because Stone is an allowlist,
+constructs Pork does not know are rejected rather than accepted.
+
+A passing check means the function meets Pork's rules, not that its logic
+is correct. Stone covers initialization, side effects, aliasing, and
+lifetimes; Bronze covers declared data flow; Silver covers selected runtime
+errors. An assistant can also make a check pass by weakening it, for
+example by adding entries to the trust file, adding `PORK_PRE`
+preconditions, or removing `PORK_STONE` and `PORK_DEPENDS`. Pork reports
+assumptions in every verdict, but the trust file and the annotations should
+be reviewed by a person and protected in CI.
+
 ## Why Silver translates C++ to C
 
 Clang resolves C++ types, overloads, template instantiations, and implicit

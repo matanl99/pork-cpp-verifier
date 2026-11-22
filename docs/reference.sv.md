@@ -791,7 +791,7 @@ funktioner i reponas egna filer räknas (även mallinstanser i deras headers).
 | fmt (14ac0d5) | modern C++, tunga mallar | 122 / 1144 | 142 / 1144 | 169 / 1144 |
 | leveldb (2946558) | Google-stil, objekt och `Status` | 16 / 902 | 16 / 902 | 21 / 902 |
 | yaml-cpp (f473f3b) | klasser, `std::string`, rekursiva typer | Pork kraschade | 180 / 1096 | 200 / 1096 |
-| `projects/state` | hexagonal, portar som referenser | 6 / 75 | 6 / 75 (32 med `std::string` betrodd) | 7 / 75 (39) |
+| eget exempelprojekt (opublicerat) | hexagonal, portar som referenser | 6 / 75 | 6 / 75 (32 med `std::string` betrodd) | 7 / 75 (39) |
 
 Senare samma dag: destruktorer (STN-68), egen kod inuti std (STN-67), rekursiva typer
 koinduktivt (STN-63) och `std::unique_ptr` (STN-69/70) gav fmt 169, leveldb 45, yaml-cpp 210,

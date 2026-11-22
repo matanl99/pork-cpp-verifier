@@ -1,4 +1,4 @@
-# Betrodda funktioner och typer för pork (projects/pork):
+# Betrodda funktioner och typer för pork:
 #   pork --silver --trust pork.trust -p . src/core/*.cpp
 std::fabs
 std::hypot
