@@ -26,7 +26,6 @@ add_library(pork_core STATIC
   core/Silver.cpp
   core/LoanSummaries.cpp
   core/Flow.cpp
-  core/UnionCheckProver.cpp
   ${CMAKE_CURRENT_BINARY_DIR}/generated/StdSummaries.cpp)
 target_include_directories(pork_core PUBLIC core)
 target_compile_options(pork_core PRIVATE -Wall -Wextra -Wpedantic)
@@ -121,7 +120,6 @@ add_executable(pork_unit_tests
   tests/unit/AnalyseTest.cpp
   tests/unit/CachingProverTest.cpp
   tests/unit/CbmcProverTest.cpp
-  tests/unit/UnionCheckProverTest.cpp
   tests/unit/EsbmcProverTest.cpp
   tests/unit/SilverTest.cpp
   tests/unit/TextReportTest.cpp

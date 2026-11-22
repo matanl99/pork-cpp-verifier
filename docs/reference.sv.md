@@ -475,8 +475,9 @@ struct Range {
 
 ## Lösare: `--silver-solver`
 
-cbmc använder normalt sin inbyggda SAT-lösare (minisat). `--silver-solver` väljer en annan:
-`cadical` (eller en annan SAT-lösare som läser DIMACS, namn eller sökväg) eller en
+Standard är `cadical` när den finns installerad, annars cbmc:s inbyggda minisat (pork
+skriver då `cadical not found, using minisat`). `--silver-solver` väljer en annan:
+`minisat`, en annan SAT-lösare som läser DIMACS (namn eller sökväg) eller en
 SMT-lösare som cbmc känner: `z3`, `cvc5`, `bitwuzla`. Lösaren och dess version ingår i
 cache-nyckeln. cbmc startas i en egen processgrupp (`setsid`) som dödas när cbmc avslutats,
 så en lösare (egen process) blir aldrig kvar, inte heller när cbmc dör av minnesgränsen.
@@ -496,8 +497,14 @@ inte: cbmc:s flyttal i SMT-LIB använder `concat` med fler än två argument, so
 läser (heltal fungerar). Bitwuzla (0.10) klarar flyttal, och skalära flyttal via cbmc fungerar,
 men i vår körning med cbmc 6.11 och bitwuzla 0.10 innehöll SMT-LIB-frågan för en struct med
 flyttal `concat` direkt på `FloatingPoint`-termer, och lösaren avvisade frågan. Varje egenskap
-i en funktion med flyttal i structar fick då status ERROR. `cadical` rekommenderas när den
-finns installerad.
+i en funktion med flyttal i structar fick då status ERROR.
+
+cadical ger också jämnare tider. På ett flyttalstungt program kan minisats tid ändras
+tiofalt av en omformulering som inte påverkar vad som bevisas. För rugbys
+`predict_position` tog minisat 29 s, 63 s eller över 300 s beroende på hur indata och
+antaganden var ordnade; cadical tog 40–42 s för alla sju prövade former. Hela rugby
+(tom cache, `--flow-oracle`, 2 jobb): minisat 49 Silver på 629 s, cadical 50 Silver på
+583 s, inga hål i beroendeoraklet med någon av dem.
 
 cbmc:s nya inkrementella SMT2-läge (`--incremental-smt2-solver 'bitwuzla --lang smt2'`, märkt
 experimentellt i 6.11) löser inte flyttalen heller. Heltal fungerar (`wrap` i korpusen
@@ -510,45 +517,17 @@ Bara status SUCCESS räknas som bevisat. ERROR/UNKNOWN utan något FAILURE ger "
 cbmc lämnar egenskaper UNKNOWN när den redan hittat ett motexempel, det är normalt. (Före
 cache-format 2 räknades ERROR som bevisat; gamla cachefiler läses därför inte.)
 
-## Omprövning av motexempel i program med unioner
+## Indata i testramen
 
-Testramen (`pork_harness`) får godtyckliga indata genom att deklarera dem
-oinitierade. När en unionmedlem i sådana indata kopieras kan cbmc 6.11.0 ge
-ett motexempel som inte stämmer med antagandena (`--no-simplify` och ESBMC
-godkänner samma program). Ges indata i stället av en funktion utan kropp
-(`T x = nondet_T();`) godkänner cbmc programmet. Att läsa en oinitierad lokal
-variabel är odefinierat beteende i C (C11 6.3.2.1p2), så felet ligger i hur
-testramen skapar indata, inte nödvändigtvis i cbmc. Det hittades av
-beroendeoraklet, som rapporterade ett hål i rugbys `player_of` (`std::visit`
-över en `std::variant`, i C en union). Att skapa indata med funktioner utan
-kropp är planerat; kontrollen nedan är en tillfällig lösning.
-
-Tills vidare kör cbmc allt som förut, men hittar cbmc fel i ett program med en
-union körs samma program med ESBMC (eller cbmc `--no-simplify` om ESBMC saknas).
-Godkänner den programmet gäller det; annars står cbmc:s svar kvar. Bevisarfel
-och tidsgränser kontrolleras inte. Avbryts kontrollen (tidsgräns, körningsfel)
-blir svaret ett bevisarfel med cbmc:s fynd i texten, inte ett slutresultat:
-cachen sparar det som en timeout (prövas igen med längre `--silver-timeout`
-eller `--silver-slow`) eller inte alls. Med `--keep-c` hamnar kontrollens
-program i underkatalogen `union-check/`. Det skyddar mot falska motexempel, inte mot
-ett felaktigt bevis (prov åt det hållet har inte hittat något).
-`core/UnionCheckProver`; dold flagga `--silver-unions=auto|esbmc|no-simplify|cbmc`
-(`cbmc`: ingen kontroll).
-
-Mätt på rugby (tom cache, `--flow-oracle`, 2 jobb):
-
-| Läge | Tid | Silver | Falska hål | Kontrollerade / godkända |
-|---|---|---|---|---|
-| cbmc, ingen kontroll | 586 s | 50 | 1 | – |
-| kontroll med ESBMC | 594 s | 50 | 0 | 11 / 1 |
-| kontroll med cbmc `--no-simplify` | 600 s | 50 | 0 | 11 / 1 |
-| alla unionprogram med ESBMC | 499 s | 49 | 0 | (50 program) |
-| alla unionprogram med `--no-simplify` | 673 s | 49 | 0 | (50 program) |
-
-Nästan alla rugbyprogram innehåller en union (typdefinitionerna följer med
-även när funktionen inte använder varianten), så att skicka alla unionprogram
-till en annan bevisare kostar två Silver-domar (minnet tar slut). Kontrollen
-av fel kostar 1–2 %.
+Testramen (`pork_harness`) får godtyckliga indata från funktioner utan kropp
+(`T x = __VERIFIER_nondet_pork_T();`). CBMC och ESBMC ger ett eget godtyckligt värde
+per anrop, fast mellan läsningar, utan varningen "no body". Samma gäller objekten
+bakom kontextreferenser och de nya värdena efter ett anrop. Indata deklareras aldrig
+oinitierade: att läsa en oinitierad lokal variabel är odefinierat beteende i C
+(C11 6.3.2.1p2), och när en unionmedlem i sådana indata kopieras kan cbmc 6.11.0 ge
+ett motexempel som inte stämmer med antagandena (`--no-simplify` och ESBMC godkänner
+samma program). `tests/data/flow/14_variant.cpp` prövar fallet med beroendeoraklet
+(som rugbys `player_of`: `std::visit` över en `std::variant`, i C en union).
 
 ## Bevisare: `--silver-prover=esbmc`
 
@@ -579,7 +558,7 @@ Ingen motsägelse mellan bevisarna. I den här mätningen gav cbmc + cadical 46 
 flyttal i structar (`vadd` på under en sekund, där cbmc med bitwuzla inte fungerar), men i
 rugby går tiden åt till att rulla ut loopar, inte till lösaren. Funktionerna som dör hos cbmc
 (`solve_pass`, `apply` som anropar den) dör hos ESBMC också: loopen i `solve_pass` rullas ut
-~2 600 gånger. cbmc med cadical är därför fortsatt det rekommenderade valet (porks standardlösare är minisat, inbyggd i cbmc; välj cadical med `--silver-solver cadical`).
+~2 600 gånger. cbmc med cadical är därför fortsatt det rekommenderade valet (porks standardlösare när cadical finns installerad).
 
 ## Självtest av förvillkoren
 
@@ -630,6 +609,7 @@ och samma C-modell, med samma kontrakt och gränser, kan då skickas till både 
   varv i stället för att rulla ut den till `--unwind`. Det gjorde rugbys loopar över spelarna
   ungefär 4 gånger billigare.
 - **Indata:** godtyckliga, men flyttal antas ändliga och enums antas ha ett uppräknat värde.
+  De kommer från funktioner utan kropp (se [Indata i testramen](#indata-i-testramen)).
   `PORK_PRE` antas i funktionen som prövas och kontrolleras (assert) när den anropas.
 - **Anrop:** allt som anropas tas med (transitivt), så ett fel i en anropad funktion är ett
   fel även hos anroparen. Betrodda funktioner går till ett kontrakt i C:
@@ -826,6 +806,13 @@ flyttkonstruktor), leveldb 45, yaml-cpp 210, rugby 58. Ingen funktion förlorade
 striktare reglerna (samma objekt, upprepade baser, `value_or`) och G1-kontrollen ger inte ett
 enda not-stone i repona: där finns inga nästlade behållare med iteratorpar. Största orsakerna
 är oförändrade: pekar- och referensfält (219–370 per repo), returtyper, `std::string`-fält.
+
+Ägda arrayer (STN-75: lokala arrayer, konstanta tabeller, `T (&)[N]`-parametrar, range-for
+över arrayer och `std::array`, statiska lokala konstanter), samma trust-fil, före → efter:
+tinyxml2 4 → 4, fmt 203 → 225 (uppslagstabeller som `digits2`, `compute_pow10`, lokala
+`constexpr`-arrayer, strängliteraler som `const char (&)[N]`), leveldb 45 → 46
+(`Random::Next`: `static const uint32_t M`), yaml-cpp 213 → 215, rugby 56 / 74 oförändrat.
+Ingen funktion förlorade Stone. Structured bindings (STN-84) ändrar inget i repona.
 
 Konstruktorerna var första orsaken i alla repon, men gav bara +5 till +27: själva
 konstruktorerna går nu igenom (delreglerna i STN-66 stoppar 2 i fmt), och det som stoppar dem

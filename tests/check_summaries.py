@@ -236,7 +236,7 @@ def build_and_run(path: Path):
         return "skip", r.stderr
     env = dict(os.environ, ASAN_OPTIONS="detect_leaks=0:exitcode=99",
                UBSAN_OPTIONS="print_stacktrace=0:halt_on_error=1:exitcode=99")
-    r = subprocess.run([str(exe)], capture_output=True, text=True, env=env, timeout=60)
+    r = subprocess.run([str(exe)], capture_output=True, text=True, env=env, timeout=300)  # gott om marginal: ctest -j4 belastar maskinen hårt
     if r.returncode == 0:  # main returnerar alltid 0; ASan/UBSan/debugläget avslutar annorlunda
         return "clean", ""
     first = next((l for l in r.stderr.splitlines()

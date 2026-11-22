@@ -189,7 +189,7 @@ int juliet_good_g2b() { int data; data = -1; data = 7; return 100 / data; }
 // Fyndet ska ha källraden, inte en rad i den genererade C-koden.
 
 // rules: SLV-11
-// expect: stone: not silver: float-to-integer conversion out of range at 20_silver.cpp:191
+// expect: stone: not silver: float-to-integer conversion out of range at 20_silver.cpp:193
 int float_to_int(float f) { return int(f); }
 
 // rules: SLV-11, SLV-17

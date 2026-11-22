@@ -38,13 +38,20 @@ Varje funktion skrivs ut två gånger: den vanliga (förvillkoret kontrolleras v
 anrop) och `__entry` (förvillkoret antas), som bara anropas av harnessen:
 
 ```c
+int __VERIFIER_nondet_pork_int(void);      // utan kropp = godtyckligt värde
+float __VERIFIER_nondet_pork_float(void);
 void pork_harness(void) {
-  int pork_a0;                       // oinitierad = godtyckligt värde för CBMC
-  float pork_a1;
+  int pork_a0 = __VERIFIER_nondet_pork_int();
+  float pork_a1 = __VERIFIER_nondet_pork_float();
   __CPROVER_assume(!__CPROVER_isnanf(pork_a1) && !__CPROVER_isinff(pork_a1));
   f_example_1234abcd__entry(pork_a0, pork_a1);
 }
 ```
+
+Indata kommer från funktioner utan kropp med prefixet `__VERIFIER_nondet_`. CBMC och
+ESBMC ger ett eget godtyckligt värde per anrop, fast mellan läsningar, utan varningen
+"no body", och programmet är väldefinierat C. Samma gäller objekten bakom
+kontextreferenser och de nya värdena efter ett anrop.
 
 Exempel (`corpus/20_silver.cpp`, `#line` borttagna):
 

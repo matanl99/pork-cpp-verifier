@@ -8,6 +8,7 @@
 #include "StringLiteralArg.hpp"
 #include "VectorBool.hpp"
 
+#include <cctype>
 #include <clang/AST/ASTContext.h>
 #include <clang/AST/Attr.h>
 #include <clang/AST/DeclCXX.h>
@@ -285,7 +286,8 @@ class Translator {
       TRY(t, cType(ctx_.getCanonicalTagType(md->getParent())));
       self_ = md->isConst() ? Self::value : Self::pointer;
       add(t + (self_ == Self::pointer ? " *self" : " self"));
-      harness += "  " + t + " self;\n" + (ctor ? "" : assumeValid(ctx_.getCanonicalTagType(md->getParent()), "self"));
+      harness += "  " + t + " self = " + nondet(t) + ";\n" +
+                 (ctor ? "" : assumeValid(ctx_.getCanonicalTagType(md->getParent()), "self"));
       harnessArgs.push_back(self_ == Self::pointer ? "&self" : "self");
     }
     for (unsigned i = 0; i < fd_.getNumParams(); ++i) {
@@ -307,19 +309,23 @@ class Translator {
         // från en vektor (Stone).
         QualType et = spanElement(*spec);
         TRY(ect, cType(et));
+        // Arrayen i en omslagsstruct, så att den kan komma från en
+        // nondet-funktion (en funktion kan inte returnera en array).
+        std::string wrap = "struct pork_arr_" + mangled(ect) + "_" + bound();
+        out_.decls.emplace_back(wrap, wrap + " {\n  " + ect + " v[" + bound() + "];\n};\n");
         std::string d = h + "__data";
         std::string k = "pork_k" + std::to_string(++loops_);
-        std::string inner = assumeValid(et, d + "[" + k + "]");
-        harness += "  " + ect + " " + d + "[" + bound() + "];\n";
+        std::string inner = assumeValid(et, d + ".v[" + k + "]");
+        harness += "  " + wrap + " " + d + " = " + nondet(wrap) + ";\n";
         if (!inner.empty())
           harness += "  for (unsigned long " + k + " = 0; " + k + " < " + bound() + "; ++" + k + ") {\n" + inner + "  }\n";
-        harness += "  " + ct + " " + h + ";\n  " + h + ".data = " + d + ";\n  __CPROVER_assume(" + h + ".size <= " +
-                   bound() + ");\n";
+        harness += "  " + ct + " " + h + " = " + nondet(ct) + ";\n  " + h + ".data = " + d + ".v;\n  __CPROVER_assume(" +
+                   h + ".size <= " + bound() + ");\n";
         out_.assumptions.insert("std::vector size <= " + std::to_string(options_.vectorBound));
         harnessArgs.push_back(h);
         continue;
       }
-      harness += "  " + ct + " " + h + ";\n" + assumeValid(t, h);
+      harness += "  " + ct + " " + h + " = " + nondet(ct) + ";\n" + assumeValid(t, h);
       if (options_.counterexample && (t->isIntegralOrEnumerationType() || t->isRealFloatingType())) {
         std::string label = p->getNameAsString();
         if (label.empty()) label = "argument " + std::to_string(i + 1);
@@ -1542,7 +1548,8 @@ class Translator {
           auto ct = cType(pt);
           if (!ct) continue;  // felet står redan i out_ via fail
           std::string obj = "pork_r" + std::to_string(++loops_);
-          out += "  " + *ct + " " + obj + ";\n" + assumeValid(pt, obj) + "  " + field + " = &" + obj + ";\n";
+          out += "  " + *ct + " " + obj + " = " + nondet(*ct) + ";\n" + assumeValid(pt, obj) + "  " + field + " = &" + obj +
+                 ";\n";
           continue;
         }
         out += assumeValid(f->getType(), field);
@@ -2638,6 +2645,25 @@ class Translator {
   // Nya godtyckliga (giltiga) värden för det ett anrop kan ändra i `target`
   // (ett C-lvalue av typen t). `writable`: värdena själva; kontextreferensernas
   // mål alltid (utom const T&), pekarna i structen aldrig.
+  // Ett godtyckligt värde av C-typen ct: ett anrop av en funktion utan kropp
+  // med prefixet __VERIFIER_nondet_. cbmc och ESBMC ger ett eget godtyckligt
+  // värde per anrop, fast mellan läsningar av variabeln, utan varningen
+  // "no body". Indata är aldrig oinitierade variabler: att läsa en sådan är
+  // odefinierat beteende i C.
+  std::string nondet(const std::string& ct) {
+    std::string type = ct;
+    for (std::string::size_type at; (at = type.find("const ")) != std::string::npos;) type.erase(at, 6);
+    std::string fn = "__VERIFIER_nondet_pork_" + mangled(type);
+    out_.decls.emplace_back(fn, type + " " + fn + "(void);\n");
+    return fn + "()";
+  }
+
+  static std::string mangled(const std::string& ct) {
+    std::string out;
+    for (char c : ct) out += std::isalnum(static_cast<unsigned char>(c)) ? c : '_';
+    return out;
+  }
+
   Text havocInto(QualType t, const std::string& target, bool writable) {
     t = t.getCanonicalType().getUnqualifiedType();
     const CXXRecordDecl* rd = t->getAsCXXRecordDecl();
@@ -2648,7 +2674,7 @@ class Translator {
       if (!writable) return std::string();
       TRY(ct, cType(t));
       std::string h = "pork_h" + std::to_string(++loops_);
-      return "{\n  " + ct + " " + h + ";\n" + assumeValid(t, h) + "  " + target + " = " + h + ";\n}\n";
+      return "{\n  " + ct + " " + h + " = " + nondet(ct) + ";\n" + assumeValid(t, h) + "  " + target + " = " + h + ";\n}\n";
     }
     std::string out;
     for (const FieldDecl* f : allFields(*rd->getDefinition())) {

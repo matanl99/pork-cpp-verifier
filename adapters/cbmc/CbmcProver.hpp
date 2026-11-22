@@ -36,8 +36,6 @@ class CbmcProver : public IProver {
     // eller en extern SAT-lösare som läser DIMACS (cadical, programnamn/sökväg).
     std::string solver = "minisat";
     bool counterexample = false;
-    // --no-simplify: reservväg för program med unioner (UnionRoutingProver).
-    bool noSimplify = false;
   };
 
   explicit CbmcProver(Options options);

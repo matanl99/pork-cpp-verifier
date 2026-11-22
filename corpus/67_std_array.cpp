@@ -204,8 +204,8 @@ int element_effect(int x) {
   return a[0];
 }
 
-// rules: STN-75, STN-3
-// expect: not-stone
+// rules: STN-75
+// expect: stone
 int c_array() {
   int a[2] = {1, 2};
   return a[0];
@@ -216,7 +216,7 @@ struct WithArray {
 };
 
 // rules: STN-75, STN-3
-// expect: not-stone
+// expect: stone
 int c_array_field() {
   WithArray w{{1, 2}};
   return w.a[0];
@@ -242,3 +242,74 @@ int pointers(int x) {
   std::array<int*, 1> a{&x};
   return *a[0];
 }
+
+struct FixedBuffer {
+  char data[8]{};
+  // rules: STN-66, STN-75
+  // expect: stone
+  FixedBuffer() = default;
+  // rules: STN-66, STN-75
+  // expect: stone
+  explicit FixedBuffer(char c) : data{c} {}
+  // rules: STN-18, STN-75
+  // expect: stone
+  char read(int i) const { return data[i]; }
+  // rules: STN-18, STN-75
+  // expect: stone
+  void write(int i, char c) { data[i] = c; }
+};
+
+struct PartialBuffer {
+  char data[8];
+  // rules: STN-66
+  // expect: not-stone: is not initialized by the constructor
+  PartialBuffer() { data[0] = '\0'; }
+};
+
+struct CharArray { char data[8]; };
+
+// rules: STN-15, STN-75
+// expect: stone
+char default_buffer() { FixedBuffer b; return b.read(0); }
+
+// rules: STN-75
+// expect: stone
+char literal_buffer() { CharArray b{"ok"}; return b.data[0]; }
+
+// rules: STN-15
+// expect: not-stone: is not initialized
+char uninitialized_buffer() { CharArray b; return b.data[0]; }
+
+// rules: STN-19, STN-75
+// expect: not-stone: unsupported cast: ArrayToPointerDecay
+const char* array_decay(const FixedBuffer& b) { return b.data; }
+
+// rules: STN-12, STN-20
+// expect: stone
+void change_chars(char& a, const char& b) { a = b; }
+
+// rules: STN-62
+// expect: not-stone: may be the same object
+void overlap_chars(FixedBuffer& b, int i, int j) { change_chars(b.data[i], b.data[j]); }
+
+// Indexet är ett okänt element för lånemodellen, också när det är en
+// konstant: 0 och 7 kan inte skiljas åt (strängt, inte fel).
+// rules: STN-75, STN-62
+// expect: not-stone: may be the same object
+void two_cells(FixedBuffer& b) { change_chars(b.data[0], b.data[7]); }
+
+#ifdef PORK_RUN
+#include <pork/run.hpp>
+PORK_RUN_CASES(
+    // Initiering (G4, MSan): alla element är satta efter konstruktionen.
+    {"FixedBuffer::FixedBuffer@250", [] { FixedBuffer b; int s = 0; for (char c : b.data) s += c; return s; }},
+    {"FixedBuffer::FixedBuffer@253", [] { FixedBuffer b('a'); return b.data[0] == 'a' && b.data[7] == 0 ? 0 : 1; }},
+    {"literal_buffer", [] { return literal_buffer() == 'o' ? 0 : 1; }},
+    {"default_buffer", [] { return default_buffer() == 0 ? 0 : 1; }},
+    // Skrivning genom indexering ändrar bara elementet.
+    {"FixedBuffer::write", [] { FixedBuffer b; b.write(7, 'z'); return b.read(7) == 'z' && b.data[6] == 0 ? 0 : 1; }},
+    {"FixedBuffer::read", [] { FixedBuffer b('k'); return b.read(0) == 'k' ? 0 : 1; }},
+    {"two_cells", [] { FixedBuffer b; b.data[7] = 'w'; two_cells(b); return b.data[0] == 'w' ? 0 : 1; }},
+    {"overlap_chars", [] { FixedBuffer b('m'); overlap_chars(b, 0, 0); return b.data[0] == 'm' ? 0 : 1; }},
+    {"c_array_field", [] { return c_array_field() == 1 ? 0 : 1; }})
+#endif

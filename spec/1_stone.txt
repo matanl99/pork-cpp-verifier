@@ -26,8 +26,8 @@ value types.
 STN-2  Struct value types
 A struct shall be a value type if it has no virtual base classes, no
 virtual functions, no mutable fields and no unions, its bases and all its
-fields are value types, no base class with fields occurs more than once
-among its base subobjects (`D : L, R` with `L : B` and `R : B`: the paths of
+fields are value types or fixed scalar array fields (STN-75), no base
+class with fields occurs more than once among its base subobjects (`D : L, R` with `L : B` and `R : B`: the paths of
 the loan model do not tell the two B apart), and every user-provided copy,
 move or destructor function is a function like any other (STN-68, STN-72).
 A base is part of
@@ -41,7 +41,7 @@ element is not translated (SLV-2).
 
 STN-3  Non-value types  [rejects]
 Pointers, references, arrays and volatile-qualified types shall not be
-value types.
+value types. Owned arrays (STN-75) are storage, not values.
 
 STN-4  Trusted types
 Where the trust file contains `type X`, an instance of class template X
@@ -189,8 +189,8 @@ function. That the pointee outlives the call is checked by the loan model
 returned).
 STN-12  Parameters
 Every parameter shall be a value type, a `const T&` (in) or a `T&` (in out)
-to a value type or an object type (STN-50), or a `std::span<const T>`
-(STN-41). The analysis shall
+to a value type, an object type (STN-50) or an owned array (STN-75), or a
+`std::span<const T>` (STN-41). The analysis shall
 reject `T&&` and pointer parameters, except the `T&&` source of a move
 constructor or move assignment (STN-72).
 
@@ -205,7 +205,8 @@ asm, labels, coroutines, ...).
 
 STN-14  Local variables
 A local variable shall be of a value type (or a reference, STN-31..36, a
-get_if pointer, STN-39, or a lambda, STN-40) and not static or thread_local,
+get_if pointer, STN-39, a lambda, STN-40, or an owned array, STN-75) and
+not static or thread_local (except a constant, STN-75),
 and shall not have a cleanup function (`__attribute__((cleanup(f)))`).
 
 STN-15  Initialisation of structs
@@ -230,8 +231,8 @@ it is checked by the compiler and has no effect at run time.
 STN-18  Expression allowlist
 Every subexpression shall have a value type or be void. Allowed: literals,
 arithmetic, comparisons, logical operators, `?:`, assignment operators,
-field access, names (STN-22), calls (STN-23), aggregate initialisation,
-trivial copies, loan values (STN-39), `nullptr`, rewritten comparisons (C++20 `a != b` as `!(a == b)`,
+field access, direct subscripting of fixed scalar array fields (STN-75),
+names (STN-22), calls (STN-23), aggregate initialisation, trivial copies, loan values (STN-39), `nullptr`, rewritten comparisons (C++20 `a != b` as `!(a == b)`,
 analysed in that form), and sizeof/alignof with a constant value (not of a VLA; the
 operand is not evaluated). The analysis shall reject any other expression kind.
 
@@ -257,8 +258,9 @@ initialiser, the whole return value, or the whole condition of an if.
 
 STN-22  Names
 Names shall refer to parameters, locals, enum constants, constexpr
-variables (including static constexpr members) or const variables with a
-constant initializer (`static const size_type npos = -1;`). The analysis
+variables (including static constexpr members), const variables with a
+constant initializer (`static const size_type npos = -1;`) or const arrays
+with constant initialization (STN-75). The analysis
 shall reject references to other global or static variables.
 
 == Calls ==
@@ -439,8 +441,8 @@ PORK_PRE/PORK_POST) may be followed by PORK_PRE. With NDEBUG nothing remains.
 STN-50  Object types
 A class that is not a value type shall be an object type if it has no
 virtual bases, its bases are object (or value) types, its fields are value
-types, port references (STN-51) or context references (STN-53), it has
-no mutable fields and no
+types, fixed scalar array fields (STN-75), port references (STN-51) or
+context references (STN-53), it has no mutable fields and no
 user-provided copy, move or destructor functions. A polymorphic class is at
 most an object type. An object type shall only be `*this` or behind a
 reference (`T&`, `const T&`): a copy would slice it, and its copy
@@ -552,16 +554,47 @@ point into v (the loan model, STN-62). An iterator from `v.begin()`/`v.end()` (a
 where the parameter is a const_iterator: the call only reads v
 (`v.insert(v.end(), x)`, `v.erase(v.begin() + i)`).
 
-STN-75  Array fields in aggregate initialisation
-An initialiser list (or a value initialisation) of array type shall only
-appear as the initialiser of an array field inside the initialiser list of
-a value type: the field of std::array under `type std::array`
-(`std::array<int, 2> a{2, 3}`, `{{2, 3}}`, `{}`, `{1}`). Its elements, and
-the expression that fills the elements not given (a default constructor),
-are checked as any other expression, and the element type shall be a value
-type (also inside a trusted type). The array is never a value of its
-own: a local array, an array parameter and a struct with an array field
-are still not value types (STN-3).
+STN-75  Owned arrays
+An owned array is a built-in array of positive constant length whose
+element type is an arithmetic or enum value type, a trivially copyable
+value type (no own copy, move or destructor code), or itself an owned
+array (`int m[2][3]`, `P p[4]`). An owned array is owned storage. It may be:
+  - a non-mutable field (STN-2, STN-50),
+  - a local variable (STN-14), initialized in its declaration: a list (the
+    implicit fill is checked too), a string literal for a character array,
+    or a default construction whose constructor initializes every element
+    (`Q q[2];` with a user constructor; `P p[2];` with a trivial one shall
+    be rejected),
+  - a parameter `const T (&a)[N]` or `T (&a)[N]` (STN-12), or a local
+    reference to an owned array or a row of one (`auto& row = m[i];`),
+  - a constant at static storage (STN-22): constexpr, or const with
+    constant initialization, also as a static local with a trivial
+    destructor (`static constexpr int t[3] = {...};`).
+Fields shall be fully initialized when the containing object is constructed
+(STN-15, STN-66); a field without initializer is initialized element by
+element, as a field of the element type.
+An owned array named directly (field, variable, or element of an owned
+array) may be subscripted, be the range of a range-for (the loop variable
+borrows an element; over a constant table nothing can be written), bind to
+a reference parameter or local reference, and be the operand of sizeof.
+The implicit array-to-pointer conversion is allowed only as part of a
+subscript or of a range-for. For the loan model the index selects an
+unknown element. A field reached through an accessor is part of the
+element: `v[k].data[i] = c` is a write to v, like `v[k].n = c` (STN-37).
+Stone does not check the index. As for `v[i]`, an index out of bounds is a
+run-time error that only Silver can rule out, and the loan model and the
+derived flow assume that the index is in bounds (an out-of-bounds write
+would reach neighbouring storage). Silver does not translate arrays yet.
+Array fields in an aggregate of a trusted value type (such as std::array)
+may also be initialized by a list or value initialization. Their element
+type shall be a value type, and the elements and fill are checked.
+An array is still not a value type (STN-3): it cannot be copied, returned,
+captured by a lambda or passed by value.
+- Flow (Bronze): the elements are `a[*]` (weak writes). In a range-for over
+  an array the compiler's `__begin`/`__end` pointers are locals of their own
+  (`++__begin` writes only the pointer); the loop variable is `a[*]`. A
+  constant table, also a static local one, is never written, so reading it
+  depends only on the index.
 
 STN-77  Iterator argument roles  [rejects]
 The roles of the iterator arguments of a std free function (also a
@@ -659,6 +692,29 @@ shall be rejected; try/catch stays rejected (STN-13).
 - G4: a throw can leave `T&` parameters and `*this` partly changed. A caller
   outside Stone that catches sees that state, which is within the effects
   the signature shows. A Bronze flow describes normal return only.
+
+STN-84  Structured bindings
+`auto [a, b] = e;`, `auto& [a, b] = e;` and `const auto& [a, b] = e;` shall
+be allowed. The hidden variable is a local like any other (STN-14,
+STN-31..36): a copy of e of a value type, or a reference to it. Each binding
+is a path into the hidden variable: the field clang binds (`[a, b].x`), or,
+for a tuple-like type, the element std::get gives (an unknown element of the
+hidden variable, as in range-for over std::map). The holding variable of a
+tuple-like binding shall be initialized by std::get on the hidden variable
+and nothing else; std::get is a trusted function (STN-24). A binding shall
+have a value type. `auto&& [a, b]`, bindings of an array (a copy of an array,
+STN-75) and other forms shall be rejected.
+- G2/G3: the loan model sees the bindings as clang does (the binding
+  expression or the holding reference). std::get on the xvalue of a copy
+  takes nothing (`forwards` in summaries/std.txt, [tuple.elem],
+  [pair.astuple]); a move out of the result is a move where it happens (P-d).
+  A use of a binding keeps the hidden variable and its holding variable live
+  (clang's liveness counts the binding): otherwise the loan of
+  `auto& [a, b] = v[0];` would die at once and `v.clear(); return a;` pass.
+- Flow (Bronze): a binding is its binding expression, so `return a + b`
+  depends on the fields, not on nothing. The holding variable of a
+  tuple-like binding is an unknown element of the hidden variable (`p[*]`),
+  and the std::get that initializes it writes nothing.
 
 STN-59  References to std results
 A local reference bound to the result of a trusted std call whose summary

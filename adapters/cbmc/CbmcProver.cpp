@@ -85,7 +85,6 @@ std::string CbmcProver::configuration() const {
     out += " " + std::to_string(options_.unwind);
     if (options_.strict) out += " --unsigned-overflow-check";
     if (options_.counterexample) out += " --trace";
-    if (options_.noSimplify) out += " --no-simplify";
     for (const std::string& f : solverFlags_) out += " " + f;
     if (!solverFlags_.empty()) out += "\nsolver " + versionOf(options_.solver);
     out += "\nmemory " + std::to_string(options_.memoryLimitMB) + "\n";  // tidsgränsen ingår inte
@@ -121,7 +120,6 @@ ProofResult CbmcProver::prove(const std::string& program) {
   args.push_back(unwind);
   if (options_.strict) args.push_back("--unsigned-overflow-check");
   if (options_.counterexample) args.push_back("--trace");
-  if (options_.noSimplify) args.push_back("--no-simplify");
   for (const std::string& f : solverFlags_) args.push_back(f);
 
   std::optional<llvm::StringRef> redirects[] = {std::nullopt, llvm::StringRef(output.path),

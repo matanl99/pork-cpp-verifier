@@ -35,7 +35,7 @@ on `PATH`.
 
 | Prover | Default solver | Optional solver selection |
 |---|---|---|
-| [CBMC](https://github.com/diffblue/cbmc) 6.x (default) | CBMC's built-in MiniSAT requires no separate installation. | Use `--silver-solver cadical`, `z3`, or `cvc5` with the corresponding executable on `PATH`. |
+| [CBMC](https://github.com/diffblue/cbmc) 6.x (default) | CaDiCaL when `cadical` is on `PATH`, otherwise CBMC's built-in MiniSAT, which requires no separate installation. | Use `--silver-solver minisat`, `z3`, or `cvc5` with the corresponding executable on `PATH`. |
 | [ESBMC](https://github.com/esbmc/esbmc) (`--silver-prover=esbmc`) | Use an ESBMC build with Bitwuzla support. | Use `--silver-solver z3`, for example, with an ESBMC build that includes Z3 support. |
 
 ### Silver runtime
@@ -138,9 +138,7 @@ example with `--keep-c`:
 This keeps numbered files such as `build/proof-inputs/silver_1.c`. Use them
 to inspect the translation or investigate a Silver finding. With
 `--keep-c`, Pork bypasses the cache so the C files are actually generated.
-If a CBMC result triggers a separate union recheck, its C files go under
-`build/proof-inputs/union-check/`. Use a fresh output directory to retain
-files from multiple runs.
+Use a fresh output directory to retain files from multiple runs.
 
 ## Documentation and tests
 

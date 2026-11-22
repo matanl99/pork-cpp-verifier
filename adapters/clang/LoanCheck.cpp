@@ -331,6 +331,12 @@ std::map<const Stmt*, std::set<const VarDecl*>> liveAfter(AnalysisDeclContext& a
     void observeStmt(const Stmt* s, const CFGBlock*, const LiveVariables::LivenessValues& v) override {
       std::set<const VarDecl*>& live = out[s];
       for (const VarDecl* d : v.liveDecls) live.insert(d);
+      // STN-84: en levande bindning håller den dolda variabeln och sin
+      // hållare levande; det är de som bär lånen (clang räknar bindningen).
+      for (const BindingDecl* b : v.liveBindings) {
+        if (const auto* dd = dyn_cast_or_null<VarDecl>(b->getDecomposedDecl())) live.insert(dd);
+        if (const VarDecl* holding = b->getHoldingVar()) live.insert(holding);
+      }
     }
   } collect(out);
   lv->runOnAllBlocks(collect);
@@ -424,7 +430,17 @@ class LoanChecker {
     fail(e, std::string("cannot follow the loans of ") + what + " (" + e->getStmtClassName() + ")");
   }
 
+  // Den dolda variabeln i `auto [a, b] = e;` heter `[a, b]`.
+  static std::string declName(const NamedDecl& d) {
+    const auto* dd = dyn_cast<DecompositionDecl>(&d);
+    if (dd == nullptr) return d.getNameAsString();
+    std::string out = "[";
+    for (const BindingDecl* b : dd->bindings()) out += (out.size() > 1 ? ", " : "") + b->getNameAsString();
+    return out + "]";
+  }
+
   std::string name(const VarDecl* v) const {
+    if (isa<DecompositionDecl>(v)) return "'" + declName(*v) + "'";
     if (v->isImplicit() || v->getName().starts_with("__")) return "the range-for iterator";
     return "'" + v->getNameAsString() + "'";
   }
@@ -438,7 +454,7 @@ class LoanChecker {
         if (p.root == kOutside)
           s = "an object outside the function";
         else if (const auto* nd = dyn_cast_or_null<NamedDecl>(p.root.decl))
-          s = nd->getNameAsString();
+          s = declName(*nd);
         else
           s = "a literal";
         break;
@@ -863,6 +879,19 @@ class LoanChecker {
       std::vector<PlaceRef> out = values(c->getTrueExpr(), s);
       for (const PlaceRef& r : values(c->getFalseExpr(), s)) out.push_back(r);
       return out;
+    }
+    // STN-75: range-for över en inbyggd array räknar ut slutet som
+    // `__range + N`. Pekaren pekar in i samma lagring som `__range`. Bara för
+    // kompilatorns egna loopvariabler, inte för pekararitmetik i koden.
+    if (const auto* b = dyn_cast<BinaryOperator>(e);
+        b != nullptr && (b->getOpcode() == BO_Add || b->getOpcode() == BO_Sub) && b->getType()->isPointerType()) {
+      const Expr* pointer = b->getLHS()->getType()->isPointerType() ? b->getLHS() : b->getRHS();
+      const Expr* offset = pointer == b->getLHS() ? b->getRHS() : b->getLHS();
+      const auto* dr = dyn_cast<DeclRefExpr>(strip(pointer));
+      if (const auto* c = dyn_cast<ImplicitCastExpr>(strip(pointer)); dr == nullptr && c != nullptr)
+        dr = dyn_cast<DeclRefExpr>(strip(c->getSubExpr()));
+      const auto* vd = dr ? dyn_cast<VarDecl>(dr->getDecl()) : nullptr;
+      if (vd != nullptr && vd->isImplicit() && offset->getType()->isIntegerType()) return values(pointer, s);
     }
     if (isa<CXXNullPtrLiteralExpr, IntegerLiteral, GNUNullExpr>(e)) return {};
     // T() / {} för en pekare: en nollpekare (`reset(pointer p = pointer())`).
@@ -1296,7 +1325,7 @@ class LoanChecker {
       // om resten (P-d): en icke-const T&&-parameter, eller objektet i en
       // &&-kvalificerad metod, får ta innehållet (`o.value_or(std::move(v))`,
       // `std::move(o).value_or(d)`). Lån in i den ägda lagringen dör.
-      if (own == nullptr && !written) {
+      if (own == nullptr && !written && !rule.forwards) {
         if (o.object)
           written = md != nullptr && md->getRefQualifier() == RQ_RValue && !md->isConst();
         else

@@ -1,0 +1,10 @@
+type std::pair
+std::pair::*
+type std::tuple
+std::tuple::*
+std::get
+type std::vector
+std::vector::*
+type std::allocator
+std::allocator::*
+std::move

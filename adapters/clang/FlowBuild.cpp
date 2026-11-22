@@ -185,11 +185,49 @@ class Builder {
 
   // Platsen ett uttryck betecknar. weak: ett element (v[i]), och skrivningen
   // lämnar de andra elementen.
+  // STN-84: en structured binding betecknar clangs bindningsuttryck: ett fält
+  // i den dolda variabeln (`[a, b].x`) eller hållarreferensen (std::get).
+  static const Expr* bindingExpr(const DeclRefExpr* d) {
+    const auto* b = dyn_cast<BindingDecl>(d->getDecl());
+    return b != nullptr ? b->getBinding() : nullptr;
+  }
+
+  // STN-84: hållaren för en tuple-lik bindning (`auto [a, b] = pair;`) är en
+  // referens initierad med std::get<I>(dold). Den pekar på ett element av den
+  // dolda variabeln; vilket säger flödet inte (svagt, dold[*]), som Stone.
+  std::optional<std::string> holdingElement(const VarDecl* vd) {
+    if (!vd->isImplicit() || vd->getInit() == nullptr) return std::nullopt;
+    const DeclRefExpr* d = getOnDecomposition(vd->getInit());
+    if (d == nullptr) return std::nullopt;
+    if (auto p = place(d)) return *p + "[*]";
+    return std::nullopt;
+  }
+
+  // `std::get<I>(dold)`: bara kompilatorn skriver det (användaren kan inte
+  // namnge den dolda variabeln). Ger dold.
+  static const DeclRefExpr* getOnDecomposition(const Expr* e) {
+    const auto* call = dyn_cast<CallExpr>(e->IgnoreImplicit());
+    const FunctionDecl* callee = call != nullptr ? call->getDirectCallee() : nullptr;
+    if (callee == nullptr || !callee->isInStdNamespace() || callee->getIdentifier() == nullptr ||
+        callee->getName() != "get" || call->getNumArgs() != 1)
+      return nullptr;
+    const auto* d = dyn_cast<DeclRefExpr>(call->getArg(0)->IgnoreParenImpCasts());
+    return d != nullptr && isa<DecompositionDecl>(d->getDecl()) ? d : nullptr;
+  }
+
   std::optional<std::string> place(const Expr* e, bool& weak) {
     e = e->IgnoreParenImpCasts();
+    if (const auto* d = dyn_cast<DeclRefExpr>(e); d != nullptr && bindingExpr(d) != nullptr)
+      return place(bindingExpr(d), weak);
     if (const auto* d = dyn_cast<DeclRefExpr>(e)) {
       const auto* vd = dyn_cast<VarDecl>(d->getDecl());
       if (vd == nullptr || !vd->hasLocalStorage()) return std::nullopt;
+      // Range-for över en C-array: kompilatorns __begin/__end är råa pekare.
+      // `++__begin` skriver bara variabeln själv; elementen nås genom
+      // loopvariabeln (rangeElement, c[*]), och användaren kan inte namnge
+      // dem. (Iteratorer över behållare: jämförelsen __begin != __end är ett
+      // anrop med iteratorargument, som flödet inte godtar än.)
+      if (rangeIterator(vd)) return localName(vd);
       if (refLike(vd->getType())) return std::nullopt;  // pekar någon annanstans: inget mål
       if (vd->getType()->isReferenceType() && !isa<ParmVarDecl>(vd)) {
         if (auto a = aliases_.find(vd); a != aliases_.end()) return a->second;
@@ -246,6 +284,8 @@ class Builder {
   // vid både läsning och skrivning. Samma vandring som place().
   FlowValues indexOf(const Expr* e) {
     e = e->IgnoreParenImpCasts();
+    if (const auto* d = dyn_cast<DeclRefExpr>(e); d != nullptr && bindingExpr(d) != nullptr)
+      return indexOf(bindingExpr(d));
     if (const auto* d = dyn_cast<DeclRefExpr>(e)) {
       if (const auto* vd = dyn_cast<VarDecl>(d->getDecl()))
         if (auto a = aliasIndex_.find(vd); a != aliasIndex_.end()) return a->second;
@@ -315,9 +355,14 @@ class Builder {
       }
     }
     if (const auto* d = dyn_cast<DeclRefExpr>(e)) {
+      if (const Expr* bound = bindingExpr(d)) return eval(bound);
       if (const auto* vd = dyn_cast<VarDecl>(d->getDecl()); vd != nullptr && vd->hasLocalStorage())
         return {FlowValue::read(localName(vd))};  // en referens som inte är en känd plats: dess värde
-      return {};  // funktioner, enum-konstanter, konstanta globaler
+      // Funktioner, enum-konstanter, konstanta globaler: inget att bero på.
+      // Allt annat är okänt (tillåtelselista), inte "inget".
+      if (isa<FunctionDecl, EnumConstantDecl, VarDecl>(d->getDecl())) return {};
+      fail(std::string("unknown name ") + d->getDecl()->getDeclKindName());
+      return {};
     }
     if (isa<CXXThisExpr>(e)) return {FlowValue::read("this")};
     if (const auto* c = dyn_cast<CallExpr>(e)) return call(c);
@@ -596,6 +641,31 @@ class Builder {
     return nullptr;
   }
 
+  // Är vd pekaren __begin/__end i en range-for över en C-array?
+  bool rangeIterator(const VarDecl* vd) const {
+    if (!vd->isImplicit() || !vd->getType()->isPointerType()) return false;
+    return rangeIteratorIn(fd_.getBody(), vd);
+  }
+  static bool rangeIteratorIn(const Stmt* s, const VarDecl* vd) {
+    if (s == nullptr) return false;
+    if (const auto* fr = dyn_cast<CXXForRangeStmt>(s))
+      for (const DeclStmt* ds : {fr->getBeginStmt(), fr->getEndStmt()})
+        if (ds != nullptr && ds->isSingleDecl() && ds->getSingleDecl() == vd) return knownRange(fr);
+    for (const Stmt* c : s->children())
+      if (rangeIteratorIn(c, vd)) return true;
+    return false;
+  }
+  // Behållare vars element platsmodellen kallar c[*].
+  static bool knownRange(const CXXForRangeStmt* fr) {
+    QualType t = fr->getRangeInit()->getType().getNonReferenceType();
+    if (t->isConstantArrayType()) return true;
+    if (const auto* rd = t->getAsCXXRecordDecl()) {
+      std::string name = rd->getQualifiedNameAsString();
+      return name == "std::vector" || name == "std::array" || name == "std::deque";
+    }
+    return false;
+  }
+
   bool constSpanRange(const VarDecl* vd) {
     const CXXForRangeStmt* fr = rangeFor(fd_.getBody(), vd);
     if (fr == nullptr) return false;
@@ -614,13 +684,7 @@ class Builder {
     const CXXForRangeStmt* fr = rangeFor(fd_.getBody(), vd);
     if (fr == nullptr) return std::nullopt;
     const Expr* r = fr->getRangeInit();
-    QualType t = r->getType().getNonReferenceType();
-    bool known = t->isConstantArrayType();
-    if (const auto* rd = t->getAsCXXRecordDecl()) {
-      std::string name = rd->getQualifiedNameAsString();
-      known = name == "std::vector" || name == "std::array" || name == "std::deque";
-    }
-    if (!known) return std::nullopt;
+    if (!knownRange(fr)) return std::nullopt;
     if (auto p = place(r)) return *p + "[*]";
     return std::nullopt;
   }
@@ -665,6 +729,10 @@ class Builder {
     }
     if (const auto* se = dyn_cast<Expr>(s); s == cond || (se != nullptr && se->IgnoreParens() == cond)) return;
     if (!isRoot(s)) return;
+    // Initieraren av en bindnings hållare (std::get på den dolda variabeln)
+    // står som egen rot i CFG:n; hållaren är redan ett alias (holdingElement),
+    // och get skriver ingenting.
+    if (const auto* se = dyn_cast<Expr>(s); se != nullptr && getOnDecomposition(se) != nullptr) return;
     // PORK_PRE/PORK_POST är kontrakt, inget dataflöde (som Pre/Post i SPARK).
     if (const auto* c = dyn_cast<CallExpr>(s))
       if (const FunctionDecl* callee = c->getDirectCallee();
@@ -712,7 +780,14 @@ class Builder {
     const auto* vd = dyn_cast<VarDecl>(d);
     if (vd == nullptr) return;
     if (!vd->hasLocalStorage()) {
-      fail("static local");
+      // STN-75: en statisk lokal konstant (constexpr, eller const med
+      // konstant initiering) är en tabell som aldrig skrivs; läsningar av den
+      // beror bara på indexet (eval ger inget för icke-lokala VarDecl).
+      const VarDecl* init = nullptr;
+      bool constant = vd->isConstexpr() ||
+                      (vd->getType().isConstant(vd->getASTContext()) && vd->getAnyInitializer(init) != nullptr &&
+                       init->hasConstantInitialization());
+      if (!constant) fail("static local");
       return;
     }
     const Expr* init = vd->getInit();
@@ -737,6 +812,11 @@ class Builder {
         }
         FlowValues v = eval(init);
         block_->stmts.push_back({FlowStmt::Kind::assign, localName(vd), std::move(v), {}});
+        return;
+      }
+      if (auto p = holdingElement(vd)) {
+        aliases_[vd] = *p;
+        aliasIndex_.erase(vd);
         return;
       }
       if (init != nullptr)

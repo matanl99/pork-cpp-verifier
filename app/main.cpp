@@ -15,7 +15,6 @@
 #include "ClangFactsSource.hpp"
 #include "TextReport.hpp"
 #include "TrustFile.hpp"
-#include "UnionCheckProver.hpp"
 
 #include <clang/Tooling/CommonOptionsParser.h>
 #include <llvm/Support/Program.h>
@@ -73,18 +72,11 @@ llvm::cl::opt<bool> silverSlow(
 llvm::cl::opt<std::string> silverProver(
     "silver-prover", llvm::cl::desc("Prover for Silver: cbmc or esbmc (default cbmc)"),
     llvm::cl::value_desc("name"), llvm::cl::init("cbmc"), llvm::cl::cat(category));
-llvm::cl::opt<std::string> silverUnions(
-    "silver-unions",
-    llvm::cl::desc("With cbmc: recheck a cbmc failure in a program with a union (with the harness's "
-                   "uninitialized inputs, cbmc 6.11 can report counterexamples there that contradict the "
-                   "assumptions) with auto (esbmc if found, else no-simplify), esbmc, no-simplify "
-                   "(cbmc --no-simplify) or cbmc (no recheck)"),
-    llvm::cl::value_desc("mode"), llvm::cl::init("auto"), llvm::cl::Hidden, llvm::cl::cat(category));
 llvm::cl::opt<std::string> silverSolver(
     "silver-solver",
-    llvm::cl::desc("Solver. cbmc: minisat (built in, default), cadical or another DIMACS SAT solver, "
-                   "or an SMT solver: z3, cvc5, bitwuzla. esbmc: bitwuzla (default), z3, ..."),
-    llvm::cl::value_desc("name"), llvm::cl::init("minisat"), llvm::cl::cat(category));
+    llvm::cl::desc("Solver. cbmc: cadical (default if installed), minisat (built in, default otherwise), another "
+                   "DIMACS SAT solver, or an SMT solver: z3, cvc5, bitwuzla. esbmc: bitwuzla (default), z3, ..."),
+    llvm::cl::value_desc("name"), llvm::cl::cat(category));
 llvm::cl::opt<bool> silverStrict(
     "silver-strict",
     llvm::cl::desc("Silver also rejects unsigned wraparound and integer conversions that lose the value"),
@@ -199,7 +191,6 @@ int main(int argc, const char** argv) {
   std::vector<std::string> contracts{PORK_CONTRACTS_DIR "/std.c"};
   contracts.insert(contracts.end(), contractFiles.begin(), contractFiles.end());
   std::unique_ptr<pork::IProver> proverPtr;
-  pork::CbmcProver::Options cbmcOptions;
   if (silverProver == "cbmc") {
     pork::CbmcProver::Options options;
     options.contracts = contracts;
@@ -208,14 +199,20 @@ int main(int argc, const char** argv) {
     options.timeoutSeconds = proverTimeout;
     options.keepDir = keepC;
     options.memoryLimitMB = silverMemory;
-    options.solver = silverSolver;
+    // cadical om den finns: på flyttalstunga program varierar minisats tid
+    // kraftigt med formelns form (docs/reference.sv.md, "Lösare").
+    std::string solver = silverSolver;
+    if (solver.empty()) {
+      solver = llvm::sys::findProgramByName("cadical") ? "cadical" : "minisat";
+      if (solver == "minisat") llvm::errs() << "pork: silver: cadical not found, using minisat\n";
+    }
+    options.solver = solver;
     options.strict = silverStrict;
     options.counterexample = silverCounterexample;
-    if (silverSolver != "minisat" && !llvm::sys::findProgramByName(silverSolver)) {
-      llvm::errs() << "pork: solver '" << silverSolver << "' not found\n";
+    if (solver != "minisat" && !llvm::sys::findProgramByName(solver)) {
+      llvm::errs() << "pork: solver '" << solver << "' not found\n";
       return pork::analysisFailed;
     }
-    cbmcOptions = options;
     proverPtr = std::make_unique<pork::CbmcProver>(std::move(options));
   } else if (silverProver == "esbmc") {
     pork::EsbmcProver::Options options;
@@ -236,44 +233,7 @@ int main(int argc, const char** argv) {
     llvm::errs() << "pork: unknown prover '" << silverProver << "' (cbmc or esbmc)\n";
     return pork::analysisFailed;
   }
-  // Ett cbmc-fel i ett program med en union kontrolleras med ESBMC eller cbmc
-  // --no-simplify, se UnionCheckProver.
-  std::unique_ptr<pork::IProver> unionPtr;
-  std::unique_ptr<pork::UnionCheckProver> checker;
-  std::string unionMode = silverUnions;
-  if (silverProver == "cbmc" && unionMode != "cbmc") {
-    if (unionMode == "auto") unionMode = llvm::sys::findProgramByName("esbmc") ? "esbmc" : "no-simplify";
-    if (unionMode == "esbmc") {
-      pork::EsbmcProver::Options options;
-      options.contracts = contracts;
-      options.includeDirs = {PORK_CONTRACTS_DIR};
-      options.unwind = unwind;
-      options.timeoutSeconds = proverTimeout;
-      // Egen katalog: två bevisare med varsin räknare skulle annars skriva
-      // över varandras silver_N.c.
-      options.keepDir = keepC.empty() ? std::string() : keepC + "/union-check";
-      options.memoryLimitMB = silverMemory;
-      options.strict = silverStrict;
-      unionPtr = std::make_unique<pork::EsbmcProver>(std::move(options));
-    } else if (unionMode == "no-simplify") {
-      pork::CbmcProver::Options options = cbmcOptions;
-      options.noSimplify = true;
-      options.keepDir = keepC.empty() ? std::string() : keepC + "/union-check";
-      unionPtr = std::make_unique<pork::CbmcProver>(std::move(options));
-    } else {
-      llvm::errs() << "pork: unknown --silver-unions '" << silverUnions << "' (auto, esbmc, no-simplify or cbmc)\n";
-      return pork::analysisFailed;
-    }
-    checker = std::make_unique<pork::UnionCheckProver>(*proverPtr, *unionPtr,
-                                                       unionMode == "esbmc" ? "esbmc" : "cbmc --no-simplify");
-  }
-  auto unionNote = [&] {
-    if (checker && checker->checked() > 0)
-      llvm::errs() << "pork: silver: " << checker->checked() << " cbmc failure(s) in a program with a union rechecked with "
-                   << (unionMode == "esbmc" ? "esbmc" : "cbmc --no-simplify") << ", " << checker->overturned()
-                   << " proved there\n";
-  };
-  pork::IProver& prover = checker ? static_cast<pork::IProver&>(*checker) : *proverPtr;
+  pork::IProver& prover = *proverPtr;
   unsigned jobs = silverJobs;
   if (jobs == 0) {
     jobs = std::max(1u, std::thread::hardware_concurrency());
@@ -285,7 +245,6 @@ int main(int argc, const char** argv) {
   }
   if (noSilverCache || !keepC.empty()) {  // --keep-c: programmen ska faktiskt skrivas
     int rc = pork::analyse(source, trust, report, &prover, jobs, only, oracleMode(), flowOpt);
-    unionNote();
     return rc;
   }
 
@@ -301,7 +260,6 @@ int main(int argc, const char** argv) {
   }
   pork::CachingProver cached(prover, {dir, silverSlow});
   int rc = pork::analyse(source, trust, report, &cached, jobs, only, oracleMode(), flowOpt);
-  unionNote();
   if (cached.hits() + cached.misses() > 0)
     llvm::errs() << "pork: silver: " << cached.hits() << " of " << cached.hits() + cached.misses()
                  << " from cache (" << dir << ")\n";

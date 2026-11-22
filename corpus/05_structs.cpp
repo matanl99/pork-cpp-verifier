@@ -124,8 +124,8 @@ int uni(U u) { return u.i; }
 // expect: not-stone: (field 'cache' of WithMutable is mutable)
 int mut(WithMutable w) { return w.v; }
 
-// rules: STN-2, STN-3
-// expect: not-stone: (field 'v' of Arr has type int[3])
+// rules: STN-2, STN-3, STN-75
+// expect: stone
 int arr(Arr a) { return a.v[0]; }
 
 // --- Medlemsfunktioner ---

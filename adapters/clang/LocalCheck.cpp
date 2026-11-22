@@ -385,6 +385,31 @@ class TypeRules {
     return e == LoanEffect::access || e == LoanEffect::writeAccess || e == LoanEffect::insert;
   }
 
+  // STN-75: en ägd array, inbäddad lagring med storlek känd vid
+  // kompileringen. Elementen är värden utan egen kod vid kopiering och
+  // destruktion (skalär, enum, trivialt kopierbar värdestruct) eller själva
+  // ägda arrayer. Arrayen som helhet är fortfarande ingen värdetyp (den kan
+  // inte kopieras eller returneras); se Checker::ownedArrayBase för var den
+  // får användas. nullopt = ägd array, annars en förklaring efter typnamnet.
+  std::optional<std::string> whyNotOwnedArray(QualType t) {
+    const auto* array = ctx_.getAsConstantArrayType(t);
+    if (array == nullptr) return "";
+    if (array->getSize().isZero()) return " (array of length 0)";
+    QualType element = array->getElementType();
+    if (element->isConstantArrayType()) return whyNotOwnedArray(element);
+    if (auto w = whyNotValue(element)) return " (element type " + typeName(element) + *w + ")";
+    if (!element.isTriviallyCopyableType(ctx_))
+      return " (element type " + typeName(element) + " is not trivially copyable)";
+    return std::nullopt;
+  }
+
+  bool isOwnedArray(QualType t) { return t->isConstantArrayType() && !whyNotOwnedArray(t); }
+
+  // Fältets typ som förklaring: en array prövas som ägd array.
+  std::optional<std::string> whyNotFieldType(QualType t) {
+    return t->isConstantArrayType() ? whyNotOwnedArray(t) : whyNotValue(t);
+  }
+
   // Lånevärde: en typ som vore en värdetyp om den inte bar lån. Lånen
   // kontrolleras av lånemodellen (STN-62, alltid på), så reglerna behandlar
   // lånevärdet som ett värde:
@@ -510,7 +535,7 @@ class TypeRules {
       if (f->isMutable()) return field + " is mutable";
       if (isPortReference(f->getType())) continue;
       if (isContextReference(f->getType())) continue;
-      if (auto w = whyNotValue(f->getType())) return field + " has type " + typeName(f->getType()) + *w;
+      if (auto w = whyNotFieldType(f->getType())) return field + " has type " + typeName(f->getType()) + *w;
     }
     // Två referensfält som kan peka på samma sak: skrivningar genom det ena
     // ändrar det andra, och det går inte att se i klassen.
@@ -677,7 +702,7 @@ class TypeRules {
       }
       std::string field = "field '" + o.field->getNameAsString() + "' of " + name;
       if (o.field->isMutable()) return field + " is mutable";
-      if (auto w = whyNotValue(o.type())) return field + " has type " + typeName(o.type()) + *w;
+      if (auto w = whyNotFieldType(o.type())) return field + " has type " + typeName(o.type()) + *w;
     }
     // STN-72: egna kopierings-/flyttfunktioner gör inte typen till en
     // icke-värdetyp (fälten är värden, så en kopia kan inte dela minne). De
@@ -703,6 +728,11 @@ class TypeRules {
       return std::nullopt;
     }
     if (const auto* ref = t->getAs<LValueReferenceType>()) {
+      // STN-75: `const T (&a)[N]`, `T (&a)[N]`: en ägd array genom referens.
+      if (ref->getPointeeType()->isConstantArrayType()) {
+        if (auto w = whyNotOwnedArray(ref->getPointeeType())) return head + *w;
+        return std::nullopt;
+      }
       if (auto w = whyNotObject(ref->getPointeeType())) return head + *w;
       return std::nullopt;
     }
@@ -978,6 +1008,8 @@ class Checker {
         if (p == nullptr || !p->getType()->isReferenceType())
           return "reference field " + name + " must be bound to a reference parameter";
         markRead(e);
+      } else if (types_.isOwnedArray(f->getType())) {
+        if (auto r = arrayElements(e)) return r;
       } else if (auto r = effectAllowed(e)) {  // en egen initiering, som `T x = f(y);`
         return r;
       }
@@ -1139,6 +1171,14 @@ class Checker {
   // for (T& x : v): v är en std::vector som är en väg. Behållaren är lånad
   // under hela loopen (iteratorerna får inte ogiltigförklaras); x är ett
   // element (öppen väg via x) eller en kopia.
+  // En variabel med statisk lagring som staticVariable godtar (constexpr
+  // eller const med konstant initiering).
+  static bool constantTable(const Expr* e) {
+    const auto* dr = dyn_cast<DeclRefExpr>(e->IgnoreParens());
+    const auto* vd = dr ? dyn_cast<VarDecl>(dr->getDecl()) : nullptr;
+    return vd != nullptr && !vd->hasLocalStorage() && !staticVariable(*vd);
+  }
+
   Reason rangeFor(const CXXForRangeStmt& rf) {
     if (rf.getInit() != nullptr) return "range-for with an init statement";
     if (auto r = destroyed(rf.getLoopVariable()->getType())) return r;  // STN-68: varje varv
@@ -1149,15 +1189,21 @@ class Checker {
     // levande genom loopen.
     bool span = !types_.isValueType(range->getType()) && types_.isLoanValue(range->getType());
     std::string tmpl = spec ? spec->getSpecializedTemplate()->getQualifiedNameAsString() : "";
-    bool sequence = tmpl == "std::vector" || (tmpl == "std::basic_string" && spec->getTemplateArgs()[0].getAsType()->isCharType());
+    bool sequence = tmpl == "std::vector" || tmpl == "std::array" ||
+                    (tmpl == "std::basic_string" && spec->getTemplateArgs()[0].getAsType()->isCharType());
     bool associative = tmpl == "std::map" || tmpl == "std::set";
-    if (!span && !sequence && !associative)
+    // STN-75: en ägd array som namnges direkt; loopen går över dess element
+    // (inga anrop: början och slut är adresser i arrayen).
+    bool array = isOwnedArrayName(range);
+    if (!span && !sequence && !associative && !array)
       return "range-for over " + types_.typeName(range->getType()) +
-             " (expected std::vector, std::string, std::map, std::set or a view)";
+             " (expected std::vector, std::array, std::string, std::map, std::set, a view or an array)";
     std::optional<Path> container = pathOf(range);
-    if (!container) return "range-for over a temporary (needs a variable or field)";
+    // En konstant tabell (statisk lagring, const) har ingen väg, men ändras aldrig.
+    bool table = array && !container && constantTable(range);
+    if (!container && !table) return "range-for over a temporary (needs a variable or field)";
     if (auto r = expr(range)) return r;
-    if (!span)
+    if (!span && !array)
       if (auto w = types_.whyNotValue(range->getType())) return "range-for over a non-value type" + *w;
     if (span)  // begin()/end() på spanen är betrodda anrop
       for (const DeclStmt* ds : {rf.getBeginStmt(), rf.getEndStmt()}) {
@@ -1180,7 +1226,9 @@ class Checker {
     if (innerList) {
       if (auto w = types_.whyNotListElement(ref->getPointeeType()))
         return "range-for variable '" + var->getNameAsString() + "' has type " + types_.typeName(vt) + *w;
-    } else if (auto w = types_.whyNotValue(ref ? ref->getPointeeType() : vt)) {
+    } else if (auto w = ref != nullptr && ref->getPointeeType()->isConstantArrayType()
+                            ? types_.whyNotOwnedArray(ref->getPointeeType())  // en rad i m[N][M]
+                            : types_.whyNotValue(ref ? ref->getPointeeType() : vt)) {
       return "range-for variable '" + var->getNameAsString() + "' has type " + types_.typeName(vt) + *w;
     }
 
@@ -1221,7 +1269,7 @@ class Checker {
       }
     }
 
-    if (ref != nullptr) {
+    if (ref != nullptr && container) {
       Path element = *container;
       element.open = true;
       refs_[var] = element;
@@ -1253,6 +1301,26 @@ class Checker {
     Mode mode;
     std::optional<Path> path = std::nullopt;
   };
+
+  // STN-75: arrayen i a[i], när a är en ägd array som namnges direkt: ett
+  // fält, en variabel (lokal, referensparameter eller konstant tabell) eller
+  // ett element i en ägd array (m[i][j]). Konverteringen till pekare godtas
+  // bara här, som en del av indexeringen.
+  const Expr* ownedArrayBase(const ArraySubscriptExpr& subscript) const {
+    const auto* cast = dyn_cast<ImplicitCastExpr>(stripNoOp(subscript.getBase()));
+    if (cast == nullptr || cast->getCastKind() != CK_ArrayToPointerDecay) return nullptr;
+    const Expr* array = stripNoOp(cast->getSubExpr());
+    return isOwnedArrayName(array) ? array : nullptr;
+  }
+
+  bool isOwnedArrayName(const Expr* e) const {
+    e = stripNoOp(e);
+    if (!e->isGLValue() || !types_.isOwnedArray(e->getType())) return false;
+    if (const auto* m = dyn_cast<MemberExpr>(e)) return isa<FieldDecl>(m->getMemberDecl());
+    if (const auto* dr = dyn_cast<DeclRefExpr>(e)) return isa<VarDecl>(dr->getDecl());
+    if (const auto* inner = dyn_cast<ArraySubscriptExpr>(e)) return ownedArrayBase(*inner) != nullptr;
+    return false;
+  }
 
   std::optional<Path> pathOf(const Expr* e) const {
     e = stripNoOp(e);
@@ -1294,6 +1362,16 @@ class Checker {
     if (const auto* u = dyn_cast<UnaryOperator>(e);  // *this
         u != nullptr && u->getOpcode() == UO_Deref && isa<CXXThisExpr>(stripNoOp(u->getSubExpr())))
       return Path{nullptr, {}, "*this"};
+    if (const auto* subscript = dyn_cast<ArraySubscriptExpr>(e)) {
+      if (const Expr* base = ownedArrayBase(*subscript)) {
+        auto p = pathOf(base);
+        if (p) {
+          p->open = true;
+          p->text = exprText(e, p->text);
+        }
+        return p;
+      }
+    }
     // v[i], *o, o.value(): en okänd del av behållaren (öppen väg).
     if (const Expr* object = accessorObject(e)) {
       std::optional<Path> p = pathOf(object);
@@ -1553,6 +1631,15 @@ class Checker {
     return init != nullptr && !isUninitializedConstruct(init->IgnoreImplicit());
   }
 
+  // Namnet i meddelanden; den dolda variabeln i `auto [a, b] = e;` heter `[a, b]`.
+  static std::string localName(const VarDecl& vd) {
+    const auto* dd = dyn_cast<DecompositionDecl>(&vd);
+    if (dd == nullptr) return vd.getNameAsString();
+    std::string out = "[";
+    for (const BindingDecl* b : dd->bindings()) out += (out.size() > 1 ? ", " : "") + b->getNameAsString();
+    return out + "]";
+  }
+
   Reason declStmt(const DeclStmt* ds) {
     for (const Decl* d : ds->decls()) {
       if (isa<TypedefNameDecl>(d)) continue;  // typedef/using-alias: ofarligt
@@ -1563,10 +1650,19 @@ class Checker {
       const auto* vd = dyn_cast<VarDecl>(d);
       if (vd == nullptr)
         return std::string("unsupported local declaration: ") + d->getDeclKindName();
-      if (!vd->hasLocalStorage())
-        return "local variable '" + vd->getNameAsString() + "' has static storage";
+      // STN-75: en statisk lokal konstant (`static constexpr int t[3] = {...};`)
+      // initieras av kompilatorn och ändras aldrig: som en konstant global.
+      // Bara med trivial destruktor (inget körs vid programmets slut).
+      if (!vd->hasLocalStorage()) {
+        QualType t = vd->getType();
+        bool constant = !t->isReferenceType() && !staticVariable(*vd) &&
+                        (types_.isValueType(t) || types_.isOwnedArray(t)) &&
+                        t.isDestructedType() == QualType::DK_none;
+        if (!constant) return "local variable '" + localName(*vd) + "' has static storage";
+        continue;
+      }
       if (vd->hasAttr<CleanupAttr>())  // STN-14: en funktion körs vid blockets slut
-        return "local variable '" + vd->getNameAsString() + "' has a cleanup function";
+        return "local variable '" + localName(*vd) + "' has a cleanup function";
       if (auto r = destroyed(vd->getType())) return r;  // STN-68: vid blockets slut
       if (const CXXRecordDecl* rd = vd->getType()->getAsCXXRecordDecl(); rd != nullptr && rd->isLambda()) {
         if (auto r = lambdaVariable(*vd)) return r;
@@ -1575,30 +1671,44 @@ class Checker {
       // STN-71: en initializer_list bara som parameter. Som lokal variabel
       // kan dess temporära array dö före den (`l = {3, 4};`).
       if (TypeRules::initializerListElement(vd->getType()))
-        return "local variable '" + vd->getNameAsString() + "' has type " + types_.typeName(vd->getType()) +
+        return "local variable '" + localName(*vd) + "' has type " + types_.typeName(vd->getType()) +
                " (std::initializer_list is only allowed as a parameter)";
       // Lånevärde (iterator, vy, pair med en iterator): lånemodellen följer
       // lånen; här granskas bara initieraren som vanligt.
       if (!vd->getType()->isReferenceType() && !types_.isValueType(vd->getType()) &&
           types_.isLoanValue(vd->getType())) {
-        if (!isInitialized(*vd)) return "local variable '" + vd->getNameAsString() + "' is not initialized";
+        if (!isInitialized(*vd)) return "local variable '" + localName(*vd) + "' is not initialized";
         initializing_ = vd;
         Reason r = effectAllowed(vd->getInit());
         initializing_ = nullptr;
         if (r) return r;
         continue;
       }
-      // Lokal referens: T& eller const T& till en värdetyp (se bindReference).
+      // STN-75: en lokal ägd array ska vara initierad i deklarationen; varje
+      // element granskas (också de som fylls i implicit).
+      if (vd->getType()->isConstantArrayType()) {
+        if (auto w = types_.whyNotOwnedArray(vd->getType()))
+          return "local variable '" + localName(*vd) + "' has type " + types_.typeName(vd->getType()) + *w;
+        if (vd->getInit() == nullptr) return "local variable '" + localName(*vd) + "' is not initialized";
+        initializing_ = vd;
+        Reason r = arrayElements(vd->getInit());
+        initializing_ = nullptr;
+        if (r) return r;
+        continue;
+      }
+      // Lokal referens: T& eller const T& till en värdetyp eller en ägd array
+      // (se bindReference).
       QualType value = vd->getType();
       const auto* ref = value->getAs<LValueReferenceType>();
       if (ref != nullptr) value = ref->getPointeeType();
-      if (auto w = types_.whyNotValue(value))
-        return "local variable '" + vd->getNameAsString() + "' has type " +
+      if (auto w = ref != nullptr && value->isConstantArrayType() ? types_.whyNotOwnedArray(value)
+                                                                  : types_.whyNotValue(value))
+        return "local variable '" + localName(*vd) + "' has type " +
                types_.typeName(vd->getType()) + *w;
       if (!isInitialized(*vd)) {
-        if (!mayBeUnassigned(*vd)) return "local variable '" + vd->getNameAsString() + "' is not initialized";
+        if (!mayBeUnassigned(*vd)) return "local variable '" + localName(*vd) + "' is not initialized";
         if (maybeUnassigned_.contains(vd))
-          return "local variable '" + vd->getNameAsString() + "' may be read before it is assigned";
+          return "local variable '" + localName(*vd) + "' may be read before it is assigned";
         unassigned_.insert(vd);
         continue;
       }
@@ -1608,6 +1718,45 @@ class Checker {
       if (r) return r;
       if (ref != nullptr)
         if (auto b = bindReference(*vd)) return b;
+      if (const auto* dd = dyn_cast<DecompositionDecl>(vd))
+        if (auto b = decomposition(*dd)) return b;
+    }
+    return std::nullopt;
+  }
+
+  // STN-84: `auto [a, b] = e;`. Den dolda variabeln (dd) är granskad ovan som
+  // en vanlig lokal, kopia eller referens. Varje bindning blir en väg in i
+  // den: ett fält (`dd.x`, clangs bindningsuttryck) eller, för tuple-lika
+  // typer, resultatet av std::get på dd (ett okänt element av dd, som i
+  // range-for över std::map). Inget annat anrop godtas i en hållare.
+  Reason decomposition(const DecompositionDecl& dd) {
+    for (const BindingDecl* binding : dd.bindings()) {
+      std::string name = "structured binding '" + binding->getNameAsString() + "'";
+      if (auto w = types_.whyNotValue(binding->getType()))
+        return name + " has type " + types_.typeName(binding->getType()) + *w;
+      std::optional<Path> path;
+      if (const VarDecl* holding = binding->getHoldingVar()) {
+        const Expr* init = holding->getInit();
+        const auto* get = dyn_cast_or_null<CallExpr>(init ? init->IgnoreImplicit() : nullptr);
+        const FunctionDecl* callee = get ? get->getDirectCallee() : nullptr;
+        if (callee == nullptr || !inSystemHeader(*callee) || callee->getQualifiedNameAsString() != "std::get")
+          return name + " does not use std::get";
+        const Expr* object = nullptr;
+        if (const auto* mc = dyn_cast<CXXMemberCallExpr>(get)) object = mc->getImplicitObjectArgument();
+        else if (get->getNumArgs() == 1) object = get->getArg(0);
+        const auto* dr = object ? dyn_cast<DeclRefExpr>(stripNoOp(object)) : nullptr;
+        if (dr == nullptr || dr->getDecl() != &dd) return name + " does not name the decomposed object";
+        if (auto r = recordCallee(*callee)) return r;
+        path = pathOf(dr);
+        if (path) path->open = true;
+      } else if (const Expr* e = binding->getBinding(); e != nullptr && isa<MemberExpr>(stripNoOp(e))) {
+        path = pathOf(e);
+      } else {
+        return name + " is not a field or a std::get element";
+      }
+      if (!path) return name + " has no known target";
+      path->text = binding->getNameAsString();
+      bindingPaths_[binding] = *path;
     }
     return std::nullopt;
   }
@@ -1698,6 +1847,7 @@ class Checker {
     if (!e->getType()->isVoidType() && !types_.isValueType(e->getType()) && bitElement(e) == nullptr &&
         !returnsLambdaArgument(e) &&
         !(e->isGLValue() && !types_.whyNotObject(e->getType())) && !isLoanValueExpr(e) &&
+        !isOwnedArrayName(e) &&
         !e->getType()->isNullPtrType())
       return std::string("expression of type ") + types_.typeName(e->getType()) + " (" +
              e->getStmtClassName() + ")";
@@ -1754,6 +1904,8 @@ class Checker {
 
     if (const auto* dr = dyn_cast<DeclRefExpr>(e)) return declRef(dr);
     if (const auto* m = dyn_cast<MemberExpr>(e)) return member(m);
+    if (const auto* subscript = dyn_cast<ArraySubscriptExpr>(e))
+      if (const Expr* base = ownedArrayBase(*subscript)) return all(expr(base), expr(subscript->getIdx()));
 
     if (const auto* il = dyn_cast<InitListExpr>(e)) {
       for (const Expr* init : il->inits())
@@ -1892,10 +2044,18 @@ class Checker {
       std::string what = o.field != nullptr ? "field '" + o.field->getNameAsString() + "'"
                                              : "base " + types_.typeName(o.type());
       if (o.field != nullptr && o.field->hasInClassInitializer()) {
-        if (auto r = expr(o.field->getInClassInitializer())) return r;
+        const Expr* init = o.field->getInClassInitializer();
+        if (types_.isOwnedArray(o.field->getType())) {
+          if (usesThis(init)) return "initializer of " + what + " uses *this";
+          if (auto r = arrayElements(init)) return r;
+        } else if (auto r = expr(init)) {
+          return r;
+        }
         continue;
       }
-      const CXXRecordDecl* sub = o.type()->getAsCXXRecordDecl();
+      // STN-75: ett arrayfält utan initierare initieras element för element,
+      // som ett fält av elementtypen.
+      const CXXRecordDecl* sub = o.type()->getBaseElementTypeUnsafe()->getAsCXXRecordDecl();
       if (sub != nullptr && sub->getASTContext().getSourceManager().isInSystemHeader(sub->getLocation()))
         continue;
       if (sub != nullptr && sub->hasDefinition() && !sub->hasTrivialDefaultConstructor()) {
@@ -1976,6 +2136,12 @@ class Checker {
         e = m->getBase();
         continue;
       }
+      // STN-75: v[k].data[i] är en del av elementet v[k], som v[k].n.
+      if (const auto* s = dyn_cast<ArraySubscriptExpr>(e))
+        if (const Expr* base = ownedArrayBase(*s)) {
+          e = base;
+          continue;
+        }
       if (const auto* c = dyn_cast<ImplicitCastExpr>(e); c != nullptr && c->getCastKind() == CK_LValueToRValue) {
         e = c->getSubExpr();
         continue;
@@ -2026,6 +2192,11 @@ class Checker {
     const VarDecl* init = nullptr;
     if (vd.getType().isConstQualified() && vd.getAnyInitializer(init) != nullptr &&
         init->isUsableInConstantExpressions(vd.getASTContext()) && init->evaluateValue() != nullptr)
+      return std::nullopt;
+    // STN-75: `const int table[] = {...};` är en const-array med konstant
+    // initiering (ingen kod vid start) som aldrig ändras.
+    if (vd.getType()->isConstantArrayType() && vd.getType().isConstant(vd.getASTContext()) &&
+        vd.getAnyInitializer(init) != nullptr && init->hasConstantInitialization())
       return std::nullopt;
     return "uses variable '" + vd.getQualifiedNameAsString() + "' with static storage";
   }
@@ -2768,6 +2939,17 @@ class Checker {
   }
 
   Reason arrayElements(const Expr* init) {
+    init = init->IgnoreImplicit();
+    if (const auto* d = dyn_cast<CXXDefaultInitExpr>(init)) return arrayElements(d->getExpr());
+    if (isa<StringLiteral>(init)) return std::nullopt;
+    // `Q q[2];`: varje element standardkonstrueras. En trivial konstruktor
+    // lämnar elementen oinitierade.
+    if (const auto* ce = dyn_cast<CXXConstructExpr>(init); ce != nullptr && ce->getType()->isConstantArrayType()) {
+      if (ce->getConstructor()->isTrivial() && !ce->requiresZeroInitialization())
+        return std::string("the elements of an array of ") +
+               types_.typeName(ce->getType()->getAsArrayTypeUnsafe()->getElementType()) + " are not initialized";
+      return constructorCall(*ce);
+    }
     if (isa<ImplicitValueInitExpr>(init)) {
       // {}: elementen värdeinitieras; samma sak som `T{}` för elementtypen.
       QualType element = init->getType()->getAsArrayTypeUnsafe()->getElementType();
@@ -2786,8 +2968,13 @@ class Checker {
         return r;
       }
     }
-    if (const Expr* filler = il->getArrayFiller(); filler != nullptr && il->hasArrayFiller())
-      if (auto r = expr(filler)) return r;
+    if (const Expr* filler = il->getArrayFiller(); filler != nullptr && il->hasArrayFiller()) {
+      if (filler->getType()->isConstantArrayType()) {  // en rad i m[N][M] = {}
+        if (auto r = arrayElements(filler)) return r;
+      } else if (auto r = expr(filler)) {
+        return r;
+      }
+    }
     return std::nullopt;
   }
 
@@ -3229,6 +3416,12 @@ std::map<const Stmt*, std::set<const VarDecl*>> liveAfterStatements(const Functi
     void observeStmt(const Stmt* s, const CFGBlock*, const LiveVariables::LivenessValues& v) override {
       std::set<const VarDecl*>& live = out[s];  // ett uttryck kan förekomma flera gånger: unionen
       for (const VarDecl* d : v.liveDecls) live.insert(d);
+      // STN-84: en levande bindning håller den dolda variabeln och sin
+      // hållare levande; det är de som bär lånen (clang räknar bindningen).
+      for (const BindingDecl* b : v.liveBindings) {
+        if (const auto* dd = dyn_cast_or_null<VarDecl>(b->getDecomposedDecl())) live.insert(dd);
+        if (const VarDecl* holding = b->getHoldingVar()) live.insert(holding);
+      }
     }
   } collect(out);
   lv->runOnAllBlocks(collect);

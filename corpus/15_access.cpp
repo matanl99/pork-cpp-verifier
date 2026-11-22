@@ -125,9 +125,43 @@ void copy_flag(std::vector<bool>& v, unsigned long i, unsigned long j) { v[i] = 
 // expect: not-stone: expression of type const std::_Bit_reference
 bool set_in_expression(std::vector<bool>& v, unsigned long i) { return (v[i] = true); }
 
+// --- Arrayfält i ett element (STN-75): v[k].data[i] är en del av v[k] ---------
+
+struct Cells {
+  char data[4]{};
+  int n = 0;
+};
+
+// rules: STN-18, STN-37, STN-75
+// expect: stone: assuming std::vector::operator[], type std::allocator, type std::vector
+void write_cell(std::vector<Cells>& v, unsigned long k, int i, char c) { v[k].data[i] = c; }
+
+// rules: STN-18, STN-37, STN-75
+// expect: stone: assuming std::vector::operator[], type std::allocator, type std::vector
+int read_cell(std::vector<Cells>& v, unsigned long k, int i) { return v[k].data[i]; }
+
+// rules: STN-18, STN-37, STN-75
+// expect: stone: assuming std::vector::operator[], type std::allocator, type std::vector
+void bump_cell(std::vector<Cells>& v, unsigned long k, int i) { ++v[k].data[i]; v[k].data[i] += 2; }
+
+// rules: STN-12, STN-20
+// expect: stone
+void set_char(char& a, const char& b) { a = b; }
+
+// rules: STN-75, STN-62
+// expect: not-stone: may be the same object
+void swap_cells(std::vector<Cells>& v, int i) {
+  char t = v[0].data[i];
+  set_char(v[0].data[i], v[1].data[i]);
+  v[1].data[i] = t;
+}
+
 #ifdef PORK_RUN
 #include <pork/run.hpp>
 PORK_RUN_CASES(
     {"write_while_borrowed", [] { World w; w.players.resize(2); write_while_borrowed(w); return w.players[0].speed == 2.0F && w.players[1].speed == 1.0F ? 0 : 1; }},
-    {"grow_in_loop", [] { World w; w.players.resize(2); w.players.shrink_to_fit(); grow_in_loop(w); return 0; }})
+    {"grow_in_loop", [] { World w; w.players.resize(2); w.players.shrink_to_fit(); grow_in_loop(w); return 0; }},
+    {"write_cell", [] { std::vector<Cells> v(2); write_cell(v, 1, 3, 'x'); return v[1].data[3] == 'x' && v[1].n == 0 && v[0].data[3] == 0 ? 0 : 1; }},
+    {"read_cell", [] { std::vector<Cells> v(1); v[0].data[2] = 'q'; return read_cell(v, 0, 2) == 'q' ? 0 : 1; }},
+    {"bump_cell", [] { std::vector<Cells> v(1); bump_cell(v, 0, 0); return v[0].data[0] == 3 && v[0].data[1] == 0 ? 0 : 1; }})
 #endif

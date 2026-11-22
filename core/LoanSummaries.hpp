@@ -43,6 +43,10 @@ namespace pork {
 //             range     alla iteratorargument får peka in i objektet
 //             consumes  iteratorn i första argumentet blir ogiltig; tillåtet
 //                       bara som `it = c.f(it)` (den skrivs över direkt)
+//             forwards  en T&&-parameter (eller objektet i en &&-metod) skickas
+//                       bara vidare: resultatet är en referens in i den, och
+//                       inget tas i anropet. Flytten sker där resultatet
+//                       används (och fångas där, P-d).
 //             interval(i,j)  parameter i och j (räknat från 0, utan objektet)
 //                       är ett intervall [first, last): båda pekar in i
 //                       samma objekt och får överlappa. Andra iterator-
@@ -60,6 +64,7 @@ struct LoanRule {
   bool position = false;
   bool range = false;
   bool consumes = false;
+  bool forwards = false;
   std::string origin;  // "std.txt:12", för felsökning
   // interval(i,j): parametrarna i och j är ett intervall [first, last) i
   // samma objekt (STN-77); i och j får överlappa varandra.

@@ -59,7 +59,11 @@ owner erase(iterator,iterator) : default range
 # --- Fria funktioner (även std::ranges-algoritmer) -------------------------
 free operator== operator!= operator< operator> operator<= operator>= operator<=> : reads
 # [variant.get], [tuple.elem]: lånar alternativet/elementet i argumentet.
-free get_if get : access
+free get_if : access
+# [tuple.elem], [pair.astuple], [array.tuple], [variant.get]: get<I>(t&&)
+# returnerar std::forward/std::move av elementet, en referens; inget flyttas
+# i anropet (structured bindings på en kopia anropar get med ett xvalue).
+free get : access forwards
 # [iterator.range]: std::begin(c) returnerar c.begin(), std::end(c) c.end() osv.
 free begin end cbegin cend rbegin rend crbegin crend : access
 # [forward], [utility.as.const]: resultatet är argumentet.
