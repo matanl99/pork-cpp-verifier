@@ -1,0 +1,225 @@
+Silver: the function is proved free of runtime errors.
+
+For every input that satisfies its preconditions, a Silver function does not
+reach a runtime error. Pork translates each Stone function (STN-*) to C and
+proves it with a bounded model checker (cbmc, or esbmc with
+--silver-prover=esbmc). Stone excludes lifetime, aliasing, indeterminate
+values and hidden state; Silver checks what remains.
+
+Requirements are written in EARS. IDs (SLV-n) are stable: never renumbered
+or reused. A removed requirement stays as "(removed)". Corpus cases name
+the rules they test with `// rules: SLV-n, ...`.
+A heading may end with `[allows]` (the corpus must have an accepted case)
+or `[rejects]` (a rejected case); without either it needs both. `[test: A.B]`
+names tests outside the corpus (GoogleTest Suite.Name or a ctest name) that
+cover what the corpus cannot express.
+
+Verdicts with --silver: `silver[: assuming ...]` or
+`stone: not silver: <finding> at file:line[; assuming ...]`.
+
+== Translation and outcome ==
+
+SLV-1  Only Stone functions  [rejects] [test: Silver.NotStoneIsNotProved]
+Silver shall only be attempted for Stone functions; every other verdict
+stays as it is.
+
+SLV-2  Exact translation or none  [test: Silver.UntranslatableCalleeIsNamed]
+Each Stone function shall be translated to C with the same behaviour, or get
+`not silver: cannot translate to C: <construct>`; never an approximation.
+
+SLV-3  Only a successful proof counts  [test: Silver.ProverErrorKeepsStone]
+A function shall be Silver only if the prover reports success for every
+check. A timeout, memory limit or prover error shall give `not silver` with
+the reason.
+
+SLV-4  Callees
+The proof of a function shall include every function it calls, transitively,
+also across translation units; a failure in a callee is a failure of the
+caller. Calls of functions with a proved PORK_POST use the contract
+(SLV-17).
+
+== Runtime checks ==
+
+SLV-5  Signed integer overflow
+SLV-6  Integer division and remainder by zero
+SLV-7  Floating-point division by zero
+SLV-8  Shifts out of range (negative or too large distance, overflowing
+       result)
+SLV-9  Floating-point overflow to +-inf
+SLV-10  NaN results
+SLV-11  Float to integer conversion of a value that does not fit
+SLV-12  Dereference of a null pointer (get_if, STN-39; nullable return,
+        STN-11)
+SLV-13  std::vector access out of range (operator[], at, front, back on an
+        empty vector, pop_back on an empty vector)
+SLV-14  std::optional access without a value (operator*, ->, value)
+SLV-15  std::span access out of range
+SLV-16  A loop or recursion that needs more than --unwind iterations
+Each of SLV-5..16 shall be a check: if some input satisfying the
+preconditions can reach it, the function shall not be Silver, with the
+finding and its source line.
+
+== Contracts ==
+
+SLV-17  Preconditions
+PORK_PRE shall be assumed when the function is proved and checked at every
+call.
+
+SLV-18  Postconditions
+PORK_POST shall be proved at every return. A caller shall use the
+postcondition instead of the body, and shall only be Silver if every
+postcondition it relies on is proved.
+
+SLV-19  Type invariants
+A PORK_INVARIANT shall be assumed and checked like a precondition and a
+postcondition, according to the parameter types (value / const& in, T& and
+*this in and out, return value out).
+
+SLV-20  Satisfiable preconditions
+If no input satisfies the preconditions and invariants together, the
+function shall not be Silver: `preconditions can never hold`.
+
+SLV-21  Trusted functions need contracts
+A call of a trusted function shall use its C contract (contracts/std.c or
+--contracts). Without one: `not silver: no contract for 'f'`. Contract files
+may include "pork_contracts.h" (PORK_FINITE_F/D, nondet_*).
+
+SLV-32  Leading asserts are preconditions
+An assert before any other statement than PORK_PRE/PORK_POST (STN-49) shall
+be a precondition, like PORK_PRE (as GNAT's pragma Precondition at the start
+of a body): `precondition of 'f': assert(c)` at the call.
+
+SLV-33  Other asserts are checks
+Any other assert shall be proved to hold, like SPARK's pragma Assert:
+`assertion 'c'` at its line.
+
+== Inputs and models ==
+
+SLV-22  Inputs
+Inputs shall be arbitrary, except: floats are finite, enums have an
+enumerated value, and a std::vector has at most --vector-bound elements
+(reported as the assumption `std::vector size <= N`).
+
+SLV-23  std::optional model  [allows]
+std::optional<T> shall be `{has, v}`, its operations modelled exactly.
+
+SLV-24  std::vector model
+std::vector<T> shall be `{size, data[N]}`, N = --vector-bound; an operation
+that would grow it beyond N shall be a finding (raise --vector-bound).
+
+SLV-35  std::string model
+std::string (std::basic_string<char>, a trusted type, STN-4) shall be a
+std::vector of char (SLV-24): `{size, data[N]}` with the assumption
+`std::string size <= N`. A string literal shall be a string of its
+characters; == and != shall compare length and characters; +=, + and a
+literal longer than N shall be a finding (raise --vector-bound).
+
+SLV-25  std::variant model
+std::variant shall be `{index, union}`; get_if, holds_alternative, get and
+visit with lambdas modelled exactly.
+
+SLV-26  std::span model  [allows]
+std::span<const T> shall be `{size, data}` pointing at the source.
+
+SLV-27  Reference and nullable returns
+A `const T&` return (STN-10) shall be returned as a value, a `const T*`
+return (STN-11) as `{has, v}`; the caller's dereference is checked (SLV-12).
+
+SLV-28  String literals
+A string literal argument (STN-29) shall be passed as a C string literal; a
+contract parameter of type `const char*` is named `const_char_ptr`.
+
+== Strict Silver ==
+
+SLV-29  Unsigned wraparound
+Where --silver-strict is given, unsigned arithmetic that wraps around shall
+be a finding.
+
+SLV-30  Lossy integer conversions
+Where --silver-strict is given, an integer conversion (implicit or explicit)
+whose value may not fit the target type shall be a finding:
+`integer conversion out of range`.
+
+== Provers ==
+
+SLV-31  Same verdicts with esbmc  [test: corpus_esbmc]
+Where --silver-prover=esbmc is given, the verdicts shall be the same as with
+cbmc; only the wording of a finding may differ (corpus: `expect[esbmc]`).
+
+== Virtual functions ==
+
+SLV-34  Dispatching calls are never bound to an implementation  [rejects]
+A dispatching call (STN-52) shall never be translated as a call of one of
+the implementations (not even a base body in the program). Without an
+interface contract (SLV-37): `no contract for 'I::f (interface contract)'`.
+
+SLV-37  Interface contracts
+Where a method has an interface contract (STN-56), a dispatching call shall
+check its precondition and use its postcondition (as SPARK's Pre'Class and
+Post'Class), T& arguments getting arbitrary values that satisfy it. After the
+call, everything outside the function that an implementation may reach
+(STN-54: *this, the objects of its context references, the reference
+parameters) shall have arbitrary valid values. A caller shall only be Silver
+if every known implementation is Silver (SLV-38).
+
+SLV-38  Liskov
+Each known implementation of a method with an interface contract (an
+override, or a defined virtual method itself) shall inherit the contract's
+precondition (assumed in its proof, checked at direct calls) and be proved to
+satisfy the contract: under the contract's precondition its own
+precondition holds and the contract's postcondition holds on return.
+Otherwise `does not satisfy the contract of 'I::f': <finding>`.
+
+== Object types ==
+
+SLV-36  Context references  [allows]
+A context reference (STN-53) shall be a pointer in the C struct; the proof
+shall let it point to a separate object with arbitrary (valid) content,
+distinct from every other input (STN-53 ensures this at every call). Fields
+of base classes shall be part of the struct.
+
+SLV-39  Constructors
+A Stone constructor (STN-66) shall be translated as a function of a pointer
+to the object: the member initialisers in order as assignments to the
+fields, a delegating initialiser as a call, then the body. Its
+preconditions shall be checked at each call and its result shall satisfy
+the type invariant (SLV-19); the invariant is not assumed on entry. A call
+shall construct a temporary. A reference field shall be bound to a `T&`
+parameter (a `const T&` parameter is a copy in C) and a base initialiser of
+a base with fields shall not be translated yet.
+
+SLV-41  Non-const reference returns  [rejects]
+A function returning `T&` into `*this` (STN-76) shall not be translated yet:
+the caller writes through the result, and a C function returning the value
+would be another program. `not silver: cannot translate to C: return type
+T & (a non-const reference, not translated yet)`. `return *this` as `C&`
+(STN-73) is translated.
+
+SLV-40  User-provided copy and move  [rejects]
+A type with a user-provided copy or move function (STN-72), also as a field
+or element, shall not be translated yet: in C every copy is a bitwise copy.
+`not silver: cannot translate to C: type T with a user-provided copy or move
+(not translated yet)`.
+
+SLV-42  Const references copied from a getter
+A local `const T&` bound to the result of a user function returning
+`const T&` is a copy in C (the C function returns the value). The copy is
+the same program only if what the reference refers to cannot change between
+the binding and a later use of the reference; Stone does not require that
+(a write to a field kills no loan, STN-62). The function shall not be
+translated when, in source order after the binding and before a use of the
+reference, or in a loop that uses the reference but does not contain the
+binding: a root of the call's object or reference arguments is assigned,
+incremented, passed to a non-const reference or pointer parameter, the
+object of a non-const method or captured by a lambda; a lambda is called;
+or, when a root is outside the function (a parameter, `*this`, a reference),
+any user code is called (a port or context reference may reach it).
+`not silver: cannot translate to C: const reference 'p' to the result of
+'f' would be a copy in C, and ...`. Found when STN-33 (which made
+the copy safe) moved to the loan model.
+
+SLV-43  throw is a run-time error
+A `throw` statement (STN-83) shall be translated as a check that it cannot
+be reached under the preconditions (like `raise` in SPARK): a reachable
+throw makes the function stone but not silver, with the throw as the
+reason. A silver function shall not carry the assumption `throws E`.

@@ -1,0 +1,9 @@
+type std::allocator
+std::allocator::*
+type std::vector
+std::vector::*
+std::sort
+std::for_each
+std::count_if
+std::find_if
+std::ranges::*

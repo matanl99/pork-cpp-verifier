@@ -1,0 +1,9 @@
+type std::allocator
+type std::less
+type std::map
+type std::pair
+type std::vector
+std::map::at
+std::map::clear
+std::map::operator[]
+std::vector::push_back

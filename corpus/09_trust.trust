@@ -1,0 +1,6 @@
+# Betrodda funktioner för 09_trust.cpp: kvalificerat namn, utan templateargument.
+std::fabs
+hypot
+ext_scale
+# Har en definition i källan: analysen vinner över listan.
+local_impure

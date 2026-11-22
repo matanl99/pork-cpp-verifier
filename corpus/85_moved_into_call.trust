@@ -1,0 +1,12 @@
+type std::allocator
+std::allocator::*
+type std::vector
+std::vector::*
+type std::optional
+std::optional::*
+type std::pair
+std::pair::*
+type std::span
+std::span::*
+std::invoke
+std::ranges::*

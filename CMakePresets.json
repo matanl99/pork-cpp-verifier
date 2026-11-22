@@ -1,0 +1,29 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": { "major": 3, "minor": 28, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "debug-asan",
+      "displayName": "Debug + ASan/UBSan",
+      "generator": "Ninja",
+      "binaryDir": "build/debug-asan",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": true,
+        "ENABLE_SANITIZERS": true
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "debug-asan", "configurePreset": "debug-asan" }
+  ],
+  "testPresets": [
+    {
+      "name": "debug-asan-tests",
+      "configurePreset": "debug-asan",
+      "output": { "outputOnFailure": true },
+      "execution": { "jobs": 4 },
+      "environment": { "ASAN_OPTIONS": "allow_user_poisoning=0" }
+    }
+  ]
+}

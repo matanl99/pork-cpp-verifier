@@ -1,0 +1,4 @@
+# Medvetet borttagna rader (STN-37/78): utan `access` i std.txt är det okänt
+# om den icke-const överlagringen bara läser.
+owner front : default
+owner end : default

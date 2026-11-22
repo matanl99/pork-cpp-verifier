@@ -1,0 +1,7 @@
+type std::allocator
+std::allocator::*
+type std::vector
+std::vector::*
+std::sort
+std::begin
+std::end

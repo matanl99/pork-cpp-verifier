@@ -1,0 +1,11 @@
+type std::variant
+std::variant::*
+std::visit
+std::holds_alternative
+std::get
+std::get_if
+type std::optional
+std::optional::*
+type std::vector
+type std::allocator
+std::vector::*

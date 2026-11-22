@@ -1,0 +1,10 @@
+type std::allocator
+type std::less
+type std::map
+type std::pair
+type std::set
+std::map::clear
+std::map::end
+std::map::find
+std::set::end
+std::set::find

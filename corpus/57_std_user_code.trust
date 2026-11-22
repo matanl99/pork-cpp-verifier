@@ -1,0 +1,11 @@
+type std::allocator
+type std::vector
+std::vector::*
+type std::optional
+std::optional::*
+type std::map
+type std::less
+type std::pair
+std::map::*
+std::allocator::*
+std::find

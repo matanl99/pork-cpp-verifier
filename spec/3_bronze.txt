@@ -1,0 +1,82 @@
+Bronze: the function's data flow stays within its declared requirements.
+
+A Bronze function is Stone, and every flow requirement it declares holds
+against the derived flow (--flow, docs/bronze.md): each output may only
+depend on the places the requirement allows. Without requirements Bronze is
+the same as Stone. The levels are cumulative as in SPARK: a function whose
+requirement does not hold is not Bronze and therefore not Silver, even if
+it is proved free of runtime errors.
+
+Requirements are written in EARS. IDs (BRZ-n) are stable: never renumbered
+or reused. A removed requirement stays as "(removed)". Corpus cases name
+the rules they test with `// rules: BRZ-n, ...`.
+A heading may end with `[allows]` (the corpus must have an accepted case)
+or `[rejects]` (a rejected case); without either it needs both. `[test: A.B]`
+names tests outside the corpus (GoogleTest Suite.Name or a ctest name) that
+cover what the corpus cannot express.
+
+Verdicts: `bronze[: assuming ...]` (requirements hold, not silver),
+`silver[: ...]` (requirements hold and proved), or
+`stone: not bronze: <output> depends on <place>, which PORK_DEPENDS does not allow`.
+
+== Requirements ==
+
+BRZ-1  Declaring a flow requirement
+`PORK_DEPENDS(output, allowed...)` and `PORK_DEPENDS_RESULT(allowed...)`
+(include/pork/annotations.hpp) shall be accepted among the leading
+statements of a body, next to PORK_PRE, PORK_POST and leading asserts (also
+an assert disabled by NDEBUG), in any order. A requirement in a method of a
+local class belongs to that method, not to the enclosing function. The output is a
+non-const reference parameter, a field path under it, or a field of *this
+in a non-const method; PORK_DEPENDS_RESULT names the return value. Each
+allowed place is a parameter, a field path under one, or a field of *this;
+`v[i]` names the elements of v. The arguments are ordinary expressions, so
+the compiler checks that the names exist. Elsewhere in the body, or with an
+argument that is not such a place, the function shall not be Bronze.
+
+BRZ-2  When a requirement holds
+A requirement shall hold when every dependency in the derived flow of the
+output and of every part of it lies within an allowed place. A place covers
+its parts (`world.pitch` covers `world.pitch.length`). An output that may
+keep its value on some normal return depends on its own entry value, which
+must then be allowed explicitly. An overestimate in the derived flow counts
+as a dependency: pork cannot tell it from a real one.
+
+BRZ-3  No flow, no Bronze  [rejects]
+When the flow of the function is not computed (docs/bronze.md, `not
+computed: ...`), its requirements shall not hold.
+
+BRZ-4  Bronze is between Stone and Silver
+A Stone function whose requirements hold shall be reported as `bronze`
+(or `silver` when proved). A function with a requirement that does not hold
+shall be reported as `stone: not bronze: ...` and shall not be Silver. A
+function without requirements keeps the Stone and Silver verdicts.
+
+BRZ-5  Flow is derived without --flow  [allows]
+Requirements shall be checked without --flow; --flow only adds the derived
+flow to the report.
+
+BRZ-6  A requirement that does not hold is an error  [rejects] [test: Analyse.FlowRequirementThatDoesNotHoldIsViolation, Analyse.FlowRequirementInFunctionThatIsNotStoneIsViolation, Analyse.TemplatePlacementErrorDroppedOnlyForReportedInstance, Analyse.StrayOccurrenceDeduplicatedAfterOnly]
+When a PORK_DEPENDS requirement does not hold (also when it is malformed or
+misplaced anywhere in the function, also in a constructor initializer, a
+lambda or an unevaluated operand such as sizeof; when the flow is not
+computed; when the function is not Stone; or when its body is trusted), pork
+shall print
+`<file>:<line>:<col>: error: '<function>' does not meet PORK_DEPENDS: <why>`
+on stderr and exit with status 1, as for pork::stone. A requirement outside
+every function body (for example a default member initializer, the
+initializer of a global, a static member or an enumerator, a default
+argument, a static_assert) belongs to no function, not even to one that
+uses the initializer or the default argument: pork
+shall print `<file>:<line>:<col>: error: PORK_DEPENDS in <where> is outside a
+function body` at the requirement and exit with status 1. The placement
+is checked in the source, also in a template that is never instantiated:
+a misplaced requirement in the body of an uninstantiated template gives
+`<file>:<line>:<col>: error: PORK_DEPENDS in the body of '<template>' must
+come before all other statements`, unless an analysed instance reports the
+same occurrence in the source (the same file and offset, not the position
+shown after #line) and that error is printed (then the error is on that
+instance). An instance that does
+not contain the occurrence, such as one where an `if constexpr` branch is
+discarded, does not remove the error. A compilation
+error stays exit status 2.

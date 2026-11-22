@@ -1,0 +1,4 @@
+type std::allocator
+type std::less
+type std::set
+std::set::insert

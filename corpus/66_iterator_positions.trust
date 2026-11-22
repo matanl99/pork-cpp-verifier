@@ -1,0 +1,14 @@
+type std::allocator
+std::allocator::*
+type std::vector
+std::vector::*
+type std::map
+std::map::*
+type std::less
+type std::pair
+std::pair::*
+std::sort
+type std::unordered_map
+std::unordered_map::*
+type std::hash
+type std::equal_to

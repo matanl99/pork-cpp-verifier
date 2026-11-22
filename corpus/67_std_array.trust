@@ -1,0 +1,3 @@
+type std::array
+std::array::*
+type Holder

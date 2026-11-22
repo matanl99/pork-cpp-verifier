@@ -1,0 +1,29 @@
+type std::allocator
+type std::vector
+std::vector::*
+std::allocator::*
+type std::optional
+std::optional::*
+type std::unique_ptr
+type std::default_delete
+std::unique_ptr::*
+std::make_unique
+type std::basic_string
+std::basic_string::*
+type std::basic_string_view
+std::basic_string_view::*
+type std::char_traits
+std::max
+std::min
+std::move
+std::for_each
+std::sort
+type std::variant
+std::variant::*
+std::visit
+std::get
+type std::pair
+std::pair::*
+std::span::*
+std::holds_alternative
+std::get_if

@@ -1,0 +1,10 @@
+// Genererad av CMake från summaries/std.txt. Ändra inte här.
+#include "LoanSummaries.hpp"
+
+namespace pork {
+
+std::string_view stdLoanSummariesText() {
+  return R"pork_summary(@PORK_STD_SUMMARIES@)pork_summary";
+}
+
+}  // namespace pork

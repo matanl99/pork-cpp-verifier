@@ -1,0 +1,6 @@
+type std::array
+std::array::*
+type std::allocator
+std::allocator::*
+type std::vector
+std::vector::*

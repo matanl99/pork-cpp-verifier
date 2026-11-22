@@ -1,0 +1,11 @@
+type std::allocator
+type std::basic_string
+type std::char_traits
+type std::less
+type std::map
+type std::pair
+std::allocator::*
+std::basic_string::*
+std::less::*
+std::map::map
+std::pair::pair

@@ -1,0 +1,4 @@
+type std::vector
+type std::allocator
+std::vector::*
+std::span::*

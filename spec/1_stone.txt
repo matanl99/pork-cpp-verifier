@@ -1,0 +1,757 @@
+Stone: the function is within the analysable subset of C++.
+
+A Stone function has no hidden state, no aliasing that the analysis cannot
+see, no reads of indeterminate values and no lifetime errors. Stone is what
+makes Silver sound: what Stone excludes, the prover does not have to model.
+Allowlist: any construct that no rule allows is not Stone.
+
+Requirements are written in EARS (When / While / If-then / Where / plain
+"shall"). Requirement IDs (STN-n) are stable: never renumbered or reused.
+A removed requirement stays as "(removed)". Corpus cases name the rules they
+test with `// rules: STN-n, ...` (see corpus/README.md).
+A heading may end with `[allows]` (the corpus must have an accepted case)
+or `[rejects]` (a rejected case); without either it needs both. `[test: A.B]`
+names tests outside the corpus (GoogleTest Suite.Name or a ctest name) that
+cover what the corpus cannot express.
+
+Verdicts: `stone`, `not-stone: <reason>`, `trusted`. "The analysis shall
+reject X" means X gives `not-stone` with a reason naming X.
+
+== Value types ==
+
+STN-1  Scalar value types  [allows]
+Integers (including bool and char), floating-point types and enums shall be
+value types.
+
+STN-2  Struct value types
+A struct shall be a value type if it has no virtual base classes, no
+virtual functions, no mutable fields and no unions, its bases and all its
+fields are value types, no base class with fields occurs more than once
+among its base subobjects (`D : L, R` with `L : B` and `R : B`: the paths of
+the loan model do not tell the two B apart), and every user-provided copy,
+move or destructor function is a function like any other (STN-68, STN-72).
+A base is part of
+the object: a constructor shall initialise it as a field (STN-66; a trivial
+default constructor leaves it uninitialised, an empty base has nothing to
+initialise), the object as a base (`Coordinates& c = p`) is the whole
+object for aliasing, and a field hidden by one of the same name is another
+field. Silver translates a class with bases as a flat C struct, the base
+fields first; a base initializer or a braced list with the base as an
+element is not translated (SLV-2).
+
+STN-3  Non-value types  [rejects]
+Pointers, references, arrays and volatile-qualified types shall not be
+value types.
+
+STN-4  Trusted types
+Where the trust file contains `type X`, an instance of class template X
+whose type arguments are all value types shall be a value type, reported as
+the assumption `type X`.
+
+STN-63  Recursive types
+A struct that contains itself through the type arguments of a trusted type
+(`struct Node { std::vector<Node> kids; }`, `std::unique_ptr<Node> next`)
+shall be a value type if it is one under the assumption that it is
+(coinductive: nothing in it is a loan, so a copy is a copy). Silver does not
+translate recursive types yet.
+
+== Function signature ==
+
+STN-5  Variadic functions  [rejects]
+The analysis shall reject variadic functions.
+
+STN-6  Templates per instantiation
+A template shall be classified per instantiation; the pattern itself shall
+not be reported.
+
+STN-7  Member functions
+A member function shall be Stone only if it is static, or a member of a
+value type or an object type (STN-50); virtual functions per STN-52. In a
+const method `*this` is a `const T&`, otherwise a `T&`.
+
+STN-8  Conversion functions
+A user-provided conversion function shall be analysed as a member function
+(STN-7), and each conversion that uses it, explicit (`static_cast<int>(v)`)
+or implicit (`v + 1`, `if (v)`), shall be a call to it: a non-const
+conversion inside an expression is a side effect there (STN-21), and a
+reference it returns follows STN-10 and STN-76. Constructors: STN-66.
+Destructors: STN-68.
+
+STN-68  Destructors
+A user-provided destructor shall be analysed as a non-const member function
+of a fully initialised object. A user-provided destructor shall not prevent
+a class from being a value type (STN-2) or an object type (STN-50): its
+fields are value types, so a copy has nothing to release twice. Every place
+where a destructor runs implicitly shall be a call to it (STN-23): the end
+of a local variable (also a range-for variable, a lambda and its captures),
+a parameter passed by value, a temporary, the fields and bases after a
+destructor's body, an implicit assignment that replaces an owned value, and
+inside std functions (STN-67). An implicit or std destructor is followed to
+the user-provided destructors it runs. Silver does not translate destructors
+yet: a function that runs one is `stone: not silver`.
+
+STN-69  Owning smart pointers
+`std::unique_ptr<T>` (trusted as `type std::unique_ptr`) shall be a value
+type when T is (STN-4), also recursively (STN-63). A raw pointer in Stone is
+always a loan (there is no `new`), so a call that takes ownership of a raw
+pointer shall be rejected: a `std::unique_ptr` or `std::shared_ptr`
+constructor or `reset` with a pointer argument other than a null pointer,
+and `release`. A `std::unique_ptr<T>` constructor or assignment from a
+`std::unique_ptr<U>` where U is another type than T (ignoring cv) shall be
+rejected unless T has a virtual destructor: the owner later deletes the U
+object as a T ([expr.delete]/3). `std::make_unique` runs T's constructor (STN-67), destruction
+runs T's destructor (STN-68), and `*p`, `p->` and `get()` borrow the owned
+object (STN-62).
+
+STN-70  Shallow const
+Where a const member function of a std type returns a non-const `T&` or
+`T*` (`std::unique_ptr::operator*`, `operator->`, `get`), const does not
+protect what it refers to. Called on a const object, its result shall only
+be used for reading: converted to a value, compared, tested as bool, bound
+to a `const T&` or `const T*`, copied, passed to a by-value or `const T&`
+parameter, used to call a const member function, or returned. Any other use
+shall be rejected.
+
+STN-66  Constructors
+A user-provided constructor of a value type or object type (STN-50) shall be
+analysed as a non-const member function, after its member initialisers:
+(a) a field initialiser (written, or the default member initialiser) shall
+be analysed as the initialiser of a local of the field's type (STN-14,
+STN-15; its outermost call may change its arguments, STN-20); a base or
+delegating initialiser as a call to that constructor (STN-23);
+(b) a reference field shall be bound directly to a reference parameter of
+the constructor;
+(c) an initialiser shall not use `*this` (no field, no method, no `this`):
+the object is not fully initialised yet;
+(d) every subobject (base or field) shall be initialised by an initialiser,
+a default member initialiser or its own default constructor (an empty base
+has nothing to initialise), so the body starts from a fully
+initialised object. A field that is first assigned in the body is rejected
+(not supported yet);
+(e) a field of an anonymous struct or union shall be rejected.
+A call to the constructor is a call (STN-23). An implicit constructor
+(`Outer o;`) is followed to the user-provided constructors of its fields
+and bases (STN-67), and (d) holds for it as for a user-provided one: a base
+whose fields have no initialiser is rejected (`struct D : B { int z = 0; };
+D d;`). Silver: SLV-39.
+
+STN-72  Copy and move functions
+A user-provided copy constructor, move constructor, copy assignment or move
+assignment of a value type shall be analysed like any other member function
+(STN-66 for the constructors). Every copy or move that runs it shall be a
+call of it (STN-23), also where it is implicit: the implicit or defaulted
+copy, move or assignment of an enclosing type, a value parameter or return,
+a range-for variable or lambda capture by copy, and std code that copies or
+moves (STN-67, also through inherited constructors). The `T&&` source of
+`T(T&&)` and `T::operator=(T&&)` shall be analysed as a `T&` parameter;
+`std::move` of a path into it is allowed (STN-57), and no path that
+overlaps the moved path (the source itself, the path or a path into it)
+shall occur after the move in evaluation order: the initialisers in the
+order they run (declaration order), then the body. A move from it inside a
+loop shall be rejected. Silver: SLV-40.
+
+STN-73  Returning *this
+A non-const member function of C returning `C&` (operator=, operator+=)
+shall return only `*this`. A call of it (not trusted, not std) is the object
+it was called on: `C& r = (a = b);` is a reference to a (STN-31).
+
+STN-76  Returning a reference into *this
+A non-const member function returning `T&`, where T is a value type other
+than its own class (`int& operator[](int i)`), shall return only a path into
+`*this`: a field, an element of a field through an accessor, a call of such
+a function on `*this`, or `c ? a : b` of such paths; never through a
+reference member (`return ctx.x;`), whose object is not the caller's. A call of it (not
+trusted, not std) is a path to the whole object it was called on, written
+when the result is written: `s[1] = 9` and `++s[1]` change s, and
+`int& r = s[1];` is a reference into s (STN-31). It may also change the
+object (its body is checked like any non-const method), so as an operand
+inside a larger expression it is a side effect (STN-21). Loans into the
+object's owned storage (a std::vector field) follow STN-62.
+
+STN-9  Value return  [rejects]
+The return type shall be void or a value type.
+
+STN-10  Reference return
+Where the return type is `const T&` to a value type, every return shall be a
+path into `*this` (const methods only) or into a `const&` parameter, or
+`c ? a : b` of such paths. The caller borrows the object or argument. A
+call of such a const method without reference or pointer parameters (not
+trusted, not std) may be returned in turn, as a path into the object it was
+called on (`return at_index(i);`). Bound to a local reference it is still a
+loan of the object (STN-62).
+
+STN-11  Pointer return
+Where the return type is `const T*` to a value type, every return shall be an
+expression that passes the expression rules (STN-18): `nullptr`, a pointer
+from `&` or `std::get_if`, a pointer variable or a call of another such
+function. That the pointee outlives the call is checked by the loan model
+(STN-62: no loan of a local variable, value parameter or temporary is
+returned).
+STN-12  Parameters
+Every parameter shall be a value type, a `const T&` (in) or a `T&` (in out)
+to a value type or an object type (STN-50), or a `std::span<const T>`
+(STN-41). The analysis shall
+reject `T&&` and pointer parameters, except the `T&&` source of a move
+constructor or move assignment (STN-72).
+
+== Statements and locals ==
+
+STN-13  Statements
+The allowed statements shall be: block, return, if (with init statement and
+condition variable), for, range-for, while, do, switch/case/default, break,
+continue, declarations, expression statements and `throw` of a <stdexcept>
+type (STN-83). The analysis shall reject all others (goto, try/catch, rethrow,
+asm, labels, coroutines, ...).
+
+STN-14  Local variables
+A local variable shall be of a value type (or a reference, STN-31..36, a
+get_if pointer, STN-39, or a lambda, STN-40) and not static or thread_local,
+and shall not have a cleanup function (`__attribute__((cleanup(f)))`).
+
+STN-15  Initialisation of structs
+A struct local shall be fully initialised in its declaration (`Vec2 v{}`,
+`Vec2 v = f()`); `Vec2 v;` with a trivial default constructor shall be
+rejected. Default member initialisers count.
+
+STN-16  No read in its own initialiser  [rejects]
+The analysis shall reject a variable that is read in its own initialiser.
+
+STN-17  Scalars assigned before use
+A scalar local may be declared without initialiser if it is assigned with
+`=` before every read on every path (clang's uninitialised-values analysis).
+It shall never be bound to a reference or captured by a lambda.
+
+STN-64  Local static_assert  [allows]
+A static_assert declaration in a function body shall be allowed and ignored:
+it is checked by the compiler and has no effect at run time.
+
+== Expressions ==
+
+STN-18  Expression allowlist
+Every subexpression shall have a value type or be void. Allowed: literals,
+arithmetic, comparisons, logical operators, `?:`, assignment operators,
+field access, names (STN-22), calls (STN-23), aggregate initialisation,
+trivial copies, loan values (STN-39), `nullptr`, rewritten comparisons (C++20 `a != b` as `!(a == b)`,
+analysed in that form), and sizeof/alignof with a constant value (not of a VLA; the
+operand is not evaluated). The analysis shall reject any other expression kind.
+
+STN-65  Non-type template parameters  [allows]
+A use of a non-type template parameter in an instantiation shall be analysed
+as the substituted value (`B ? 1 : 0` in `count<true>` as `true ? 1 : 0`).
+
+STN-19  Casts
+Numeric conversions (implicit, static_cast, C-style, functional) between
+value types shall be allowed, and pointer to bool and nullptr to pointer
+(STN-39). The analysis shall reject reinterpret_cast, const_cast,
+dynamic_cast and other casts to or from pointers.
+
+STN-20  Side effects only at statement level
+`++`, `--`, `=` and compound assignment (including struct assignment) shall
+only appear as an expression statement, a for step, or a statement-level
+comma chain, never inside another expression.
+
+STN-21  Calls that modify their arguments
+A call with a `T&` argument or a non-const object shall only appear as an
+expression statement, the whole right-hand side of an assignment, the whole
+initialiser, the whole return value, or the whole condition of an if.
+
+STN-22  Names
+Names shall refer to parameters, locals, enum constants, constexpr
+variables (including static constexpr members) or const variables with a
+constant initializer (`static const size_type npos = -1;`). The analysis
+shall reject references to other global or static variables.
+
+== Calls ==
+
+STN-23  Transitive Stone
+A function shall be Stone only if every function it calls is Stone or
+trusted (greatest fixpoint over the call graph, also across translation
+units). A call to a function without definition that is not trusted shall
+be rejected.
+
+STN-67  User code inside std
+A call to a function in a system header shall also be a call (STN-23) to
+every user-provided function that its instantiated body can run, followed
+transitively through other system-header functions and implicit special
+members: constructors (`emplace_back`, `make_unique`), operators
+(`std::less` calling `operator<`), destructors (explicit calls, `delete`,
+temporaries and locals). Trusting a std function trusts the library, not the
+user code it runs. Lambdas are checked where they are written (STN-40).
+
+STN-24  Trusted functions
+Where a function without definition is listed in the trust file, or a
+function is annotated `pork::trusted`, it shall be trusted and reported as
+an assumption of every caller (transitively). A trust-file entry shall not
+apply to a function with a definition in the analysed sources. An annotated
+definition shall get the verdict `trusted` and its body shall not be
+analysed.
+
+STN-25  Forwarding references in trusted library code  [allows]
+A forwarding reference parameter (`U&&`, U a template parameter) of a
+function in a system header has the type of the instance (`U&&` with U = T&
+is T&) and may write (`std::ranges::sort(v)`, `std::invoke(f, x)`,
+`o.value_or(x)`). A line in summaries/std.txt says nothing about it: the
+argument is passed on to code that may be the user's. One exception: a
+constructor builds its object from the argument (a copy of an lvalue, or a
+view the loan model follows, `std::span<const T>(v)`), so the argument
+counts as a read where no user code the constructor reaches can write it:
+no non-const member function of T (a conversion function) and no function
+with a non-const reference parameter to T (`Bump(int&)` in
+`std::optional<Bump>(a)`).
+
+STN-26  Reference arguments are paths
+An argument for a `T&` parameter, or the object of a non-const method, shall
+be a path: a variable or a field (`a`, `p.x`, `this->x`, `*this`), so that
+what the call writes is known (G4). Whether it overlaps another argument is
+decided by the loan model (STN-62).
+
+STN-27  (removed)
+Overlapping reference arguments (`swap(a, a)`, `move_x(p, p.x)`) are
+rejected by the loan model (STN-62, G3), which has the only definition of
+"may be the same object". `a = f(a)` with `f(int&)` is no alias: the right
+operand is sequenced before the assignment.
+
+STN-28  Temporaries as reference arguments  [allows]
+A temporary passed to a reference parameter shall not count as aliasing or
+as a side effect.
+
+STN-29  String literal arguments
+A string literal passed directly to a `const char*` parameter shall be
+allowed; no other use of the pointer.
+
+STN-30  Default arguments
+A default argument shall be analysed at the call site, as part of the
+caller.
+
+== Local references and borrows ==
+
+STN-31  Reference to a path
+A local reference bound to a path shall be another name for that path; what
+is written through it is a write of that path (STN-26, G4).
+
+STN-32  Reference to a temporary  [allows]
+A local `const T&` bound to a temporary shall be allowed (the lifetime is
+extended).
+
+STN-33  (removed)
+A local reference bound to an element (`t.players[i]`, a `const T&` getter)
+is another name for an unknown part of the container (STN-31). Whether a
+change kills it is decided by the loan model (STN-62, G2): a field write or
+an insertion into a node-based container does not.
+
+STN-34  (removed)
+That a loan lives until the last use of the reference or an alias of it is
+part of the loan model (STN-62).
+
+STN-35  Range-for borrows
+A range-for shall be over a path to a std::vector, std::string, std::map,
+std::set or a std::span parameter; what the loop body may change while the
+iteration lives is decided by the loan model (STN-62). Iteration over std::map and std::set shall use copies
+or const element references. Const reference structured bindings over
+std::map are permitted when they use std::get.
+
+STN-36  Rejected bindings  [rejects]
+The analysis shall reject a non-const local reference bound to `c ? a : b`,
+to a call that may refer to more than one object or through a temporary
+argument (what is written through it would not be known, G4), and `T&&`
+locals. A const local reference bound that way is its own root: only reads
+go through it, and whether it can dangle is decided by the loan model
+(STN-62).
+
+STN-37  Accessors
+`v[i]`, `*o`, `o->f` and the like on a trusted type shall be a read of the
+container (a const call) when only read, and a write to the container when
+written, which then shall be a path. A non-const std method counts as such
+an accessor only where summaries/std.txt says it does not write (`reads`,
+`access`), never because a const overload exists. The same holds for
+`v.begin()`/`v.end()` read as iterators (STN-74, STN-78).
+
+STN-38  std::vector<bool> elements
+Reading `v[i]` as bool and assigning `v[i] = b` on a `std::vector<bool>`
+shall be element accesses; any other use of the proxy shall be rejected.
+
+== Trusted library types ==
+
+STN-39  Loan values
+A loan value is a type that would be a value type except that it carries
+loans: a pointer to an object type, a std type marked [[gsl::Pointer]]
+(iterators, std::span, std::string_view), and a std class template that is
+not [[gsl::Owner]] (trusted, or with a trivial destructor) whose arguments
+are value types or loan values with at least one loan value (e.g.
+`std::pair<iterator, bool>`). A container of loan values is not a loan value.
+A local variable, an expression and a discarded call result may be a loan
+value; what it borrows is followed by the loan model (STN-62), including
+reseating, comparison and dereference. `&x` shall take a loan of a glvalue;
+pointers may only be compared with == and !=; the analysis shall reject
+pointer arithmetic and ordering. Operations of [[gsl::Pointer]] std types
+are not recorded as callees; their effects are summaries (STN-62).
+STN-40  Lambdas
+A lambda shall be allowed if it is not mutable, captures only locals of
+value type (not this, references, unassigned scalars, init captures) and is
+only called. A call counts by-reference captures as reference arguments.
+
+STN-41  std::span<const T> parameters
+A parameter may be a `std::span<const T>` (dynamic extent) of value type T
+(STN-12). Other spans are loan values (STN-39): a local span, a span created
+at a call and range-for over a span are followed by the loan model (STN-62),
+which also rejects a span argument that overlaps a changed operand.
+== Contracts ==
+
+STN-42  Preconditions
+`PORK_PRE(c)` shall only appear first in a body, and c shall be a pure
+expression over parameters and `*this`.
+
+STN-43  Postconditions
+`PORK_POST(R r, c)` shall only appear first in a body (after PORK_PRE), R
+shall be the return type, and c shall be a pure expression.
+
+STN-44  Type invariants
+`PORK_INVARIANT(c)` in a struct shall be a const method that is Stone.
+
+== Requirements and exit status ==
+
+STN-45  Required Stone
+Where a function is annotated `pork::stone` and is not Stone, pork shall
+report an error and exit with status 1.
+
+STN-46  Analysis failure  [test: Analyse.SourceFailureGivesErrorAndNoVerdicts]
+If the sources do not compile, or a compile command cannot be used, pork
+shall exit with status 2 and report no verdicts.
+
+STN-47  Compiler flags  [allows]
+Pork shall analyse with each file's compile command, except that warnings
+shall not be errors (-Werror) and GCC's flags for module dependency scanning
+(-fmodules-ts, -fmodule-mapper=, -fdeps-*) shall be dropped.
+
+STN-48  Reported scope  [test: Analyse.OnlyReportsFunctionsUnderTheGivenDirectories, Analyse.OnlyStillClassifiesThroughCalleesOutside, Analyse.OnlyChecksRequirementsInScope, Silver.WantedLimitsTheRootsButNotTheCallees]
+Where --only <dir> is given, pork shall report, prove (Silver) and check
+(STN-45) only functions in files under one of the directories. Functions
+outside shall still be analysed, so that callers see their verdicts.
+
+STN-49  assert
+`assert(c)` from <assert.h>/<cassert> as a statement shall be allowed where c
+is a pure expression (as in STN-42); the rest of the macro's expansion is the
+C library's and shall not be analysed. A leading assert (before or among
+PORK_PRE/PORK_POST) may be followed by PORK_PRE. With NDEBUG nothing remains.
+
+== Virtual functions ==
+
+STN-50  Object types
+A class that is not a value type shall be an object type if it has no
+virtual bases, its bases are object (or value) types, its fields are value
+types, port references (STN-51) or context references (STN-53), it has
+no mutable fields and no
+user-provided copy, move or destructor functions. A polymorphic class is at
+most an object type. An object type shall only be `*this` or behind a
+reference (`T&`, `const T&`): a copy would slice it, and its copy
+constructor is rejected (STN-8).
+
+STN-51  Interfaces and port references
+An interface shall be a polymorphic class without fields whose bases are
+interfaces. A field of type `I&` or `const I&`, I an interface, shall be a
+port reference: an object the analysis cannot see into. Reference fields to
+anything else shall be rejected (not supported yet).
+
+STN-52  Virtual functions and dispatching calls
+A virtual function (also an override or a pure virtual's implementation)
+shall be analysed like any member function. A call of a virtual function
+that is not qualified (`Base::f()`) and not on a final class or function is
+dispatching: it shall be Stone only if every implementation in the analysed
+sources (the function itself if defined, and every override) is Stone, and
+it shall be reported as the assumption `dispatch I::f` for implementations
+outside them. Otherwise `dispatches to non-stone 'X::f'`.
+
+STN-53  Context references
+A field `T&` or `const T&` where T is a value type (a context reference,
+`Context& game_`) shall be a hidden reference argument of every member
+function. An object type shall not have two context references that may
+refer to the same object (one type reaches the other through fields, bases
+or type arguments). In a call, a reference argument whose type reaches T (or
+that has its own context reference reaching T) shall not be passed together
+with an argument that has a context reference to T, unless both only read:
+`argument 'c' may refer to the same object as reference field 'X::f' of 'x'`.
+An argument whose path goes through a context reference (`h.ref_`) is in an
+unknown T object: it shall not be passed with another reference argument
+that reaches T (or has a context reference reaching T), unless both only
+read; two paths through the same reference are compared as paths.
+A call with an argument that has a non-const context reference may modify
+through it, also for a const member function: it is a side effect (STN-20).
+
+STN-54  Calls that reach a port
+A call reaches a port if it is dispatching (STN-52) or an argument (or the
+object) is or contains a port reference (STN-51). The implementation behind
+a port may hold references to anything outside the function (bound in a
+constructor) and call back (re-entry). Such a call shall be a side effect
+(STN-20), also for a const member function: `call to 'f' reaches a port`.
+No loan into owned storage outside the function shall be live across it;
+the loan model decides (STN-62: `calls 'f', which reaches a polymorphic
+object and may change ...`).
+
+STN-55  Arguments of dispatching calls
+A reference argument of a dispatching call that is not a local variable, a
+value parameter or a temporary shall not possibly be the same object as
+something a known implementation (STN-52, in any translation unit) reaches:
+- an object a context reference of the implementation's class refers to,
+  if one type reaches the other (unless both are const): `argument 't' may
+  refer to the same object as reference field 'C::f' of the implementation
+  'C::m'`; an argument that is a path of value fields in *this is only
+  inside objects of the types along the path;
+- a field of the implementation's object, if a context reference anywhere
+  in the program refers to a type the fields contain and the argument's
+  type is inside it, or the implementation has port references and may call
+  back (unless the argument is const, the method is const and there are no
+  ports): `argument 't' may refer to a field of the implementation 'C::m'`.
+Implementations outside the analysed sources are covered by the assumption
+`dispatch I::f`.
+
+STN-56  Interface contracts
+A free function marked PORK_INTERFACE_CONTRACT (the contract file) shall be
+the contract of the virtual method with the same name in the class of its
+first parameter (`const I&` for a const method, otherwise `I&`), with the
+method's remaining parameter types and return type: otherwise `no virtual
+method 'I::f' with this signature`. Its body shall only contain PORK_PRE and
+PORK_POST. A method shall have at most one contract, and not both one in the
+contract file and PORK_PRE/PORK_POST in its own definition (later also C++26
+pre/post on the declaration): `'I::f' has a contract in its definition and in
+the contract file`.
+
+STN-57  std::move
+`std::move(x)` shall be allowed where x is a path rooted in a local
+variable or value parameter (not a reference; for the source of a move
+constructor or assignment see STN-72) whose root is not used after
+the call (clang's LiveVariables over the function; a later assignment counts
+as a use) and does not occur in another argument of the same call: after a
+move, the value is valid but unspecified. As an argument it is a temporary
+(no aliasing check). Otherwise `'x' is used after std::move(x)`, `'x' is used
+in the same call as std::move(x)` or `std::move of something other than a
+local variable or value parameter`. Silver: a copy of x. In the loan model a
+move into a call consumes the place, whatever summaries/std.txt says about the
+call's other effects (P-d): an argument for a non-const `T&&` parameter, or
+the object of a non-const `&&`-qualified method (`o.value_or(std::move(v))`,
+`std::move(o).value_or(d)`), is written, and loans into its owned storage
+die.
+
+STN-58  Local iterators
+A local iterator is a loan value (STN-39); it may be initialised by any
+expression that passes the rules. Invalidation, comparison with an iterator
+into a different object and use after the container changes are rejected by
+the loan model (STN-62) according to summaries/std.txt.
+STN-74  Iterator positions
+Where a method of a std container takes an argument of the container's own
+iterator type (iterator, const_iterator, local_iterator, reverse variants),
+that argument shall point into the object of the call: everything it
+borrows may be the object (the loan model, STN-62). This holds whether or
+not summaries/std.txt lists the method; a missing line shall not make it
+unsound. Exceptions: a deduced template parameter (`insert(p, InputIt i,
+InputIt j)`), and the arguments after the first of splice/splice_after,
+which point into the other list. `v.insert(w.end(), x)` and `v.erase(b, e)` with e from
+another container are rejected ([sequence.reqmts]: p is an iterator into a,
+[q1, q2) a range of a). The other iterators of `v.insert(p, i, j)` shall not
+point into v (the loan model, STN-62). An iterator from `v.begin()`/`v.end()` (and `+ n`,
+`- n` on it) on a non-const v may be written directly as such an argument
+where the parameter is a const_iterator: the call only reads v
+(`v.insert(v.end(), x)`, `v.erase(v.begin() + i)`).
+
+STN-75  Array fields in aggregate initialisation
+An initialiser list (or a value initialisation) of array type shall only
+appear as the initialiser of an array field inside the initialiser list of
+a value type: the field of std::array under `type std::array`
+(`std::array<int, 2> a{2, 3}`, `{{2, 3}}`, `{}`, `{1}`). Its elements, and
+the expression that fills the elements not given (a default constructor),
+are checked as any other expression, and the element type shall be a value
+type (also inside a trusted type). The array is never a value of its
+own: a local array, an array parameter and a struct with an array field
+are still not value types (STN-3).
+
+STN-77  Iterator argument roles  [rejects]
+The roles of the iterator arguments of a std free function (also a
+std::ranges algorithm) are data in summaries/std.txt: `interval(i,j)` says
+that parameters i and j are a range [first, last), never guessed from the
+signature. The two iterators of such a range shall point into the same
+object, for every origin they may have (`it = c ? v.begin() : w.begin()`;
+the same holds for iterators compared, STN-62, and for positions, STN-74):
+the same root and the same known path. Roots that only may alias (a context
+reference and a parameter) are not enough, and an element of a container
+is not known: `m[0].begin()` and `m[1].end()` both point into some element
+of m. What is reached through one binding of a reference is one object
+(`for (auto& row : m) std::sort(row.begin(), row.end())`); a loan taken
+through an earlier binding (the previous iteration) is not. A pointer is an iterator when
+the overload is chosen (`std::move(first, last, d)` on std::array). Two other iterator or
+pointer arguments that may point into the same object, where the function
+may write through one, are rejected: `std::copy(b, e, d)` with d in [b, e)
+violates [alg.copy] ("result is not in the range [first, last)"). A std
+free function with two or more iterator or pointer arguments and no line in
+summaries/std.txt is rejected (its roles are unknown), so a missing line
+makes the analysis stricter, never unsound.
+
+STN-78  Iterators to std algorithms
+An iterator from `v.begin()`/`v.end()` (and `+ n`, `- n` on it) on a
+non-const v may be written directly as an argument of a std free function
+call where that call may have a side effect (STN-21): the call, not
+begin()/end(), changes v, through the iterators (STN-62, STN-77).
+`std::sort(v.begin(), v.end());` is a statement that changes v. A std::ranges
+algorithm object (a niebloid, `std::ranges::sort(v.begin(), v.end())`) is a
+free function here, as in the loan model. The same
+holds for a std free function on the container that summaries/std.txt says
+only reads (`std::begin(v)`, [iterator.range]: it returns v.begin()).
+
+STN-79  Lambdas as arguments to std
+A lambda shall also be allowed directly as an argument of a call to a std
+function (`std::sort(b, e, [](const T& a, const T& b) { ... })`), or a local
+lambda variable copied there (`std::ranges::find_if(r, same_kind)`), if it
+satisfies STN-40 and writes nothing it captures by reference: the std
+function keeps and calls a copy, and such a write would not show in the
+call. A by-reference capture counts as a `const&` argument of the call (the
+aliasing rules see it), and the loan model follows the lambda's loans
+(STN-62). Every instance of its call operator (a generic lambda has one per type
+the std function uses) is checked as a lambda body. A lambda as an argument
+of a user function, or bound to anything else, is still rejected.
+
+STN-80  Consteval calls  [allows]
+A call to a consteval function (an immediate invocation) whose result is of
+arithmetic type, enumeration type or an empty class with a trivial
+destructor shall be a constant: the compiler has evaluated it, and no code
+runs (`(a <=> b) < 0` builds std::__cmp_cat::__literal_zero). A result that
+is a pointer, a reference, a class with fields or a class with a
+non-trivial destructor shall be checked as any call: a temporary bound to a
+reference is materialised and destroyed at run time (`take(mk())`).
+
+STN-81  Local using-declarations  [allows]
+A local `using std::swap;` or `using namespace N;` shall be accepted: it
+only changes name lookup, and each call is checked with the function the
+compiler chose (an own `swap` found by argument-dependent lookup, or
+`std::swap`).
+
+STN-82  Code that runs is accounted for  [rejects]
+Every element of a function's control-flow graph (Clang's CFG with implicit
+and temporary destructors and initialisers) that runs code shall reach only
+user code that the other rules have accounted for as a call (STN-23, STN-67,
+STN-68): a function that is itself a recorded call, or whose user code (the
+instantiated bodies and implicit members it runs) is. Otherwise the function
+is rejected ("G1: ... runs here"). This is a cross-check: an exception in
+another rule (STN-80) may only leave out code that does not run, never hide
+code that does. The elements are calls, constructions, operator new/delete
+(also the allocator element), implicit and temporary destructors, member and
+base initialisers, cleanup functions (__attribute__((cleanup))), and the
+expressions of default arguments and default member initialisers (also in
+aggregates), which the CFG keeps as leaves and the check follows, temporary
+destructors included. A call with no known callee (through a function or
+member pointer) is rejected. Not followed: consteval functions, pork's
+contract functions (recognised by their annotation pork::pre/pork::post, not
+by namespace: other code in namespace pork is followed) and lambda bodies
+(checked where they are written, STN-40).
+
+STN-83  throw as leaving the function
+`throw E("literal");` shall be allowed as a statement (also as the only
+statement of a branch), where E is one of the <stdexcept> types
+(std::logic_error, domain_error, invalid_argument, length_error, out_of_range,
+runtime_error, range_error, overflow_error, underflow_error) and the argument
+is a string literal. The function then ends without returning. The verdict
+shall carry the assumption `throws E` (the constructor and destructor of E are
+std code), and it spreads to callers like other assumptions. `throw` inside an
+expression (`c ? x : throw ...`), rethrow, other types and other arguments
+shall be rejected; try/catch stays rejected (STN-13).
+- G1: the destructors that run while the exception leaves are those of the
+  live locals, and a local's destructor is accounted where it is declared
+  (STN-68), also on a path that only throws.
+- G2: no code of the function runs after the throw except destructors; the
+  exception object may only borrow string literals.
+- G4: a throw can leave `T&` parameters and `*this` partly changed. A caller
+  outside Stone that catches sees that state, which is within the effects
+  the signature shows. A Bronze flow describes normal return only.
+
+STN-59  References to std results
+A local reference bound to the result of a trusted std call whose summary
+effect is access, writeAccess or insert (summaries/std.txt: map::at,
+map::operator[], vector::front, std::get ...) borrows the object (or the
+first argument of a free function), independently of the other arguments.
+The call's side effects shall be checked as a mutating call before the loan
+begins.
+STN-60  Discarded loan-value results
+A trusted std call whose result is a loan value (STN-39), such as
+`set::insert`, `map::insert` or `map::erase(it)`, may be used as a standalone
+statement with its result discarded. Its mutation shall be checked as for
+other mutating calls.
+STN-61  Braced lists to std functions
+A trusted std function or constructor taking a `std::initializer_list` may
+take a directly written braced list. Each element initializer shall pass the
+normal expression checks. A direct ordinary string literal may be forwarded
+by a trusted std::pair constructor to a std::string element. The list and
+its backing array shall only be used for that call. A user-provided function
+or constructor may take a braced list as well (STN-71).
+
+STN-71  std::initializer_list parameters
+std::initializer_list<T> is a view of a temporary array, never a value type
+(not even with `type std::initializer_list` in a trust file). A parameter may
+be a `std::initializer_list<T>` (by value) of value type T (STN-12); it may be
+iterated (range-for), read with size/begin/end (trusted members, STN-24) and
+passed on to another std::initializer_list parameter. A braced list may be
+the argument of such a parameter; each element initializer shall pass the
+normal expression checks. A local variable, field, return value or lambda
+capture shall not be a std::initializer_list (its array may die before it,
+`l = {3, 4};`). A pointer from begin/end is a loan value of the caller's
+temporary array (STN-62). T may itself be a std::initializer_list of such
+a T (nested lists, `{{1, 2}, {3}}`): the inner lists are elements of the
+outer temporary array and their arrays live and die with it. An inner list
+may be bound by a range-for `const auto&` and passed on; the loan model
+treats its array as storage owned under the parameter (like the elements of
+a `std::vector<std::vector<T>>`), so a loan into it ends with the caller's
+temporary.
+== Loan model (docs/stone_model.md) ==
+
+The loan model runs next to the rules above (`--loans=report|enforce`). It
+does not name idioms: places (a root and a path of fields, where `[*]` is
+owned storage such as an element or a variant alternative), loans held by
+loan-bearing values (references, pointers, gsl::Pointer types such as
+iterators and views, lambdas with reference captures, classes holding any of
+these) and effects of calls from summaries. Corpus cases state the model's
+verdict with `// loans: ok` or `// loans: rejected: <reason>`.
+
+STN-62  Loan model  [test: corpus_loans, summaries_runtime]
+A function shall be Stone only if both the rules and the loan model accept
+it (the model always runs; --loans=report additionally prints both verdicts
+separately). The loan model shall reject a function
+  - when a place changes while a live variable holds a loan in owned storage
+    under it (G2), or a place goes out of scope while a live variable holds a
+    loan of it;
+  - when a live variable borrows a temporary that is destroyed at the end of
+    the full-expression;
+  - when it returns or stores a loan of a local variable, value parameter or
+    temporary;
+  - when two operands of a call may reach the same object and one of them is
+    changed, counting the loans held by lambdas and classes with reference
+    members (G3); two iterators or views may overlap;
+  - when it compares iterators that point into different objects (positions:
+    iterators and pointers; a view with begin(), such as std::string_view,
+    is a range, and `==` on it compares the contents);
+  - when a call reaches a polymorphic object while a live variable borrows
+    owned storage in an object outside the function;
+  - when an expression that carries loans is not understood, or a node in
+    the control-flow graph is neither handled nor known to have no effect on
+    loans (allowlist, design decision: asm, new/delete, throw,
+    reinterpret_cast and const_cast are rejected by the model on its own).
+A call to a std function uses the rule for it in summaries/std.txt (or a
+file given with --summaries, which adds or replaces rules), chosen by the
+gsl::Owner/gsl::Pointer category, the name and which parameters are
+iterators; insertion into a node-based container (`insert`) keeps loans of
+its elements, a `position` argument may point into the object, and a
+`consumes` iterator argument may be invalidated only when the result is
+assigned directly back to the same variable (`it = c.erase(it)`). A file
+that cannot be read or has an unknown category, effect or modifier is an
+error.
+A call to a function defined in the same translation unit (not in std or a
+system header, not virtual, a template or recursive) uses a summary derived
+from its body: the places relative to *this and the parameters that it
+changes and that its result borrows. Where the summary cannot express an
+effect (a stored loan, a call reaching a polymorphic object, a path through
+a pointer field) or the model rejects the callee, the call has no summary.
+A call without a summary changes its non-const object and non-const
+reference arguments, may write through the exclusive loans of its
+loan-bearing operands, and returns loans of owned storage in all of them.
+The target of a reference member or pointer field may be any object outside
+the function whose type reaches it, and what other loan-bearing contents of
+an outside object point to may be any object outside the function; parameters and *this are distinct from each other.
+Two live references into the same object inside one function are not
+rejected by the loan model (design decision: G3 applies at
+calls, where the callee assumes distinct parameters; inside the function
+Silver models the alias).

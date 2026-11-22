@@ -1,0 +1,29 @@
+digraph Pork {
+  graph [label="Pork analysis flow", labelloc=t, fontname="sans-serif",
+         ranksep=0.55, nodesep=0.35, bgcolor="white"];
+  node [shape=box, style="rounded,filled", fillcolor="#f0f4f8",
+        color="#60758a", fontname="sans-serif", fontsize=11];
+  edge [color="#526578", fontname="sans-serif", fontsize=9];
+
+  inputs [label="C++ source and compiler flags\nCompilation database or flags after --"];
+  clang [label="Clang\nTyped AST and control-flow graph"];
+  facts [label="Collect function facts\nLocal checks, loan analysis and call targets\nBuild flow graphs and attempt C translation for Silver"];
+
+  stone [label="Pork Stone\nClassify functions across the call graph", fillcolor="#e6edf3"];
+  bronze [label="Pork Bronze\nCheck declared dependencies against inferred flow\n--flow displays the inferred flow", fillcolor="#f4e2d2"];
+  silver [label="Pork Silver (--silver)\nAssemble C models and proof harnesses", fillcolor="#e5e8ef"];
+  prove [label="CBMC or ESBMC\nCheck the generated C under model assumptions"];
+  report [label="Report function verdicts\nAssumptions, findings and requirement violations",
+          fillcolor="#e0efe9"];
+  equivalence [label="Separate equivalence prototype\nCompare original C++ and generated C\nESBMC in C++20 mode", style="rounded,dashed,filled"];
+
+  inputs -> clang -> facts -> stone;
+  stone -> bronze [label="Stone candidates"];
+  stone -> report [label="Rejected or trusted"];
+  bronze -> silver [label="Silver requested and declared requirements satisfied"];
+  bronze -> report [label="Stone / Bronze or Bronze requirement failed"];
+  silver -> prove [label="C program"];
+  silver -> report [label="Translation unavailable"];
+  prove -> report [label="Proof, finding or inconclusive result"];
+  silver -> equivalence [label="Retained C and original C++", style=dashed, constraint=false];
+}

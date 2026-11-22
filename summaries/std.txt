@@ -1,0 +1,98 @@
+# pork: sammanfattningar av std för lånemodellen (STN-62).
+#
+# Det här är antaganden, inte bevis: libstdc++ analyseras aldrig. Varje rad
+# ska gå att granska mot standarden (paragrafen står i kommentaren). Format
+# och betydelse: core/LoanSummaries.hpp. Det som saknas här får den
+# försiktiga standarden (ändrar allt icke-const det når, resultatet lånar
+# allt), så en saknad rad gör modellen strängare, aldrig osund.
+
+# --- Iteratorer och vyer ([[gsl::Pointer]]) --------------------------------
+# [iterator.requirements]: avreferering ger en referens in i det iteratorn
+# pekar på; stegning och tilldelning ändrar bara iteratorn själv.
+pointer operator* operator-> operator[] : access
+pointer operator++ operator-- operator+= operator-= operator= : self
+pointer operator== operator!= operator< operator> operator<= operator>= operator<=> : reads
+pointer <const> : reads
+
+# --- Behållare och ägande typer ([[gsl::Owner]]) ---------------------------
+# Åtkomst lånar element (ägd lagring) utan att ändra behållaren.
+owner begin end cbegin cend rbegin rend crbegin crend : access
+owner front back data at find lower_bound upper_bound equal_range value : access
+owner operator[] operator* operator-> : access
+# [map.access], [unord.map.elem]: operator[] sätter in om nyckeln saknas.
+# I map flyttas inga noder ([associative.reqmts.general]); unordered_map kan rehasha.
+owner std::map::operator[] : insert
+owner std::unordered_map::operator[] : writeAccess
+owner size empty capacity max_size count contains has_value index length : reads
+owner compare c_str starts_with ends_with get_allocator key_comp value_comp : reads
+# [optional.observe]: value_or läser *this. Raden säger inget om v: U&& skickas
+# vidare till en konvertering T(U) som kan vara användarkod (P-d i
+# docs/stone_model.md, STN-25).
+owner value_or : reads
+owner operator== operator!= operator< operator> operator<= operator>= operator<=> conversion : reads
+
+# Insättning med en position: positionen pekar in i behållaren per definition
+# ([sequence.reqmts] a.insert(p, t), a.emplace(p, args)). Bara första
+# argumentet: i a.insert(p, i, j) får i och j inte peka in i a.
+owner insert(iterator,...) emplace(iterator,...) : default position
+
+# [associative.reqmts.general]/[list.modifiers]: insättning ogiltigförklarar
+# inga iteratorer eller referenser (noder flyttas inte).
+owner std::map::insert std::map::emplace std::map::try_emplace : insert
+owner std::multimap::insert std::multimap::emplace : insert
+owner std::set::insert std::set::emplace : insert
+owner std::multiset::insert std::multiset::emplace : insert
+owner std::map::insert(iterator,...) std::map::emplace_hint(iterator,...) std::map::try_emplace(iterator,...) : insert position
+owner std::multimap::insert(iterator,...) std::multimap::emplace_hint(iterator,...) : insert position
+owner std::set::insert(iterator,...) std::set::emplace_hint(iterator,...) : insert position
+owner std::multiset::insert(iterator,...) std::multiset::emplace_hint(iterator,...) : insert position
+owner std::list::push_back std::list::push_front std::list::emplace_back std::list::emplace_front : insert
+owner std::list::insert(iterator,...) std::list::emplace(iterator,...) : insert position
+
+# Radering via iterator: iteratorn får peka in i behållaren och blir ogiltig
+# ([sequence.reqmts] a.erase(q), [associative.reqmts] a.erase(q)); den
+# returnerade iteratorn ersätter den (`it = c.erase(it)`). Övriga lån in i
+# behållaren dör (försiktigt: för noder bara det raderade elementet).
+owner erase(iterator) : default position consumes
+owner erase(iterator,iterator) : default range
+
+# --- Fria funktioner (även std::ranges-algoritmer) -------------------------
+free operator== operator!= operator< operator> operator<= operator>= operator<=> : reads
+# [variant.get], [tuple.elem]: lånar alternativet/elementet i argumentet.
+free get_if get : access
+# [iterator.range]: std::begin(c) returnerar c.begin(), std::end(c) c.end() osv.
+free begin end cbegin cend rbegin rend crbegin crend : access
+# [forward], [utility.as.const]: resultatet är argumentet.
+free move forward as_const : identity
+# [alg.find], [alg.search], [alg.binary.search] m.fl.: resultatet är en
+# position i det första intervallet.
+free find find_if find_if_not adjacent_find search_n : access interval(0,1)
+free find_end find_first_of search mismatch : access interval(0,1) interval(2,3)
+free lower_bound upper_bound partition_point min_element max_element : access interval(0,1)
+free is_sorted_until is_heap_until : access interval(0,1)
+
+# --- Argumentroller för övriga algoritmer (STN-77) --------------------------
+# interval(i,j): [first, last) i samma objekt ([iterator.requirements.general]:
+# [i, j) är ett giltigt intervall bara om j kan nås från i). Raderna ger bara
+# roller; effekten är den försiktiga (default). Andra iteratorargument som
+# kan peka in i samma objekt avvisas när funktionen kan skriva genom dem.
+# [alg.sort], [alg.fill], [alg.reverse], [alg.foreach], [alg.count],
+# [alg.replace], [alg.remove], [alg.unique], [alg.all.of], [alg.is.sorted],
+# [numeric.iota], [accumulate], [iterator.operations] (distance).
+free sort stable_sort fill reverse for_each count count_if replace replace_if : default interval(0,1)
+free remove remove_if unique iota all_of any_of none_of is_sorted accumulate distance : default interval(0,1)
+# [alg.copy], [alg.move], [alg.transform]: result ligger inte i [first, last).
+free copy copy_if copy_backward move_backward transform : default interval(0,1)
+# [alg.transform] ranges::transform(first1, last1, first2, last2, result, op):
+# två intervall. std::transform(first1, last1, first2, result, op) har fyra
+# iteratorparametrar, first2 är där ensam (raden ovan).
+free transform(iterator,iterator,iterator,iterator,iterator,...) : default interval(0,1) interval(2,3)
+# Algoritmen std::move(first, last, result), inte std::move(x) ([forward]).
+free move(iterator,...) : default interval(0,1)
+# [alg.equal], [alg.swap]: två intervall (swap_ranges: first2 ensam).
+free equal swap_ranges : default interval(0,1) interval(2,3)
+# [alg.rotate], [alg.nth.element], [partial.sort], [alg.merge]: (first, middle, last).
+free rotate nth_element partial_sort inplace_merge : default interval(0,1) interval(1,2) interval(0,2)
+# [alg.copy] copy_n(first, n, result), [alg.fill] fill_n, [alg.swap] iter_swap(a, b):
+# inga intervall, varje iterator är en egen position.
+free copy_n fill_n iter_swap : default

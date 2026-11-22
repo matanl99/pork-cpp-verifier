@@ -1,0 +1,24 @@
+type std::allocator
+std::allocator::*
+type std::vector
+std::vector::*
+type std::array
+std::array::*
+std::sort
+std::copy
+std::copy_n
+std::fill
+std::reverse
+std::iter_swap
+std::max_element
+std::find
+std::move
+std::includes
+std::rotate
+std::_V2::rotate
+std::ranges::*
+std::transform
+type std::basic_string_view
+std::basic_string_view::*
+type std::char_traits
+std::operator==

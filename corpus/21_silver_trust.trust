@@ -1,0 +1,4 @@
+std::hypot
+std::fabs
+std::clamp
+external

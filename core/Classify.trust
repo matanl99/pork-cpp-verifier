@@ -1,0 +1,25 @@
+# Self-analysis: build/pork -p build --only core --trust core/Classify.trust core/Classify.cpp
+# Standard-library assumptions for the classifier.
+type std::allocator
+type std::basic_string
+type std::basic_string_view
+type std::char_traits
+type std::expected
+type std::less
+type std::map
+type std::optional
+type std::pair
+type std::set
+type std::vector
+
+std::allocator::*
+std::basic_string::*
+std::basic_string_view::*
+std::get
+std::map::*
+std::operator+
+std::operator==
+std::operator<=>
+std::optional::*
+std::set::*
+std::vector::*

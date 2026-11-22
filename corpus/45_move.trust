@@ -1,0 +1,32 @@
+# Betrodda funktioner och typer för pork (projects/pork):
+#   pork --silver --trust pork.trust -p . src/core/*.cpp
+std::fabs
+std::hypot
+std::clamp
+type std::optional
+std::optional::*
+type std::vector
+std::vector::*
+type std::allocator
+type std::variant
+std::variant::*
+std::visit
+std::holds_alternative
+std::get
+std::get_if
+std::ceil
+std::operator==
+std::operator!=
+std::span::*
+type std::basic_string
+std::basic_string::*
+std::operator<=>
+std::allocator::*
+std::operator+
+std::operator==
+std::round
+round
+type std::expected
+std::expected::*
+type std::unexpected
+std::unexpected::*

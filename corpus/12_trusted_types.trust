@@ -1,0 +1,3 @@
+# std::optional<T> är en värdetyp när T är det, och alla dess medlemmar betros.
+type std::optional
+std::optional::*

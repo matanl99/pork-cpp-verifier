@@ -1,0 +1,11 @@
+type std::allocator
+type std::vector
+std::vector::*
+std::allocator::*
+type std::array
+std::array::*
+type std::initializer_list
+std::initializer_list::*
+std::span::*
+std::sort
+std::for_each
