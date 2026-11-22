@@ -60,6 +60,7 @@ import os
 import re
 import shutil
 import subprocess
+from functools import cache
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 import sys
@@ -257,14 +258,25 @@ def case_files(case):
     return [case] if is_case_file(case) else []
 
 
+@cache
+def memory_cap():
+    """Minnestak för bevisaren (cbmc/esbmc): utan det dödar oomd terminalen.
+    systemd-run --user kräver en användarsession, som saknas i containrar och CI;
+    då körs bevisaren utan tak."""
+    cap = ["systemd-run", "--user", "--scope", "-q", "-p", "MemoryMax=8G", "-p", "MemorySwapMax=0"]
+    if shutil.which("systemd-run") is None:
+        return []
+    probe = subprocess.run([*cap[:4], "true"], capture_output=True)
+    return cap if probe.returncode == 0 else []
+
+
 def run_case(pork, case, files, extra, prover):
     include = Path(__file__).resolve().parent.parent / "include"
     std = "-std=c17" if all(f.suffix == ".c" for f in files) else "-std=c++23"
     cmd = [pork, *extra, *trust_file(case), *summaries_file(case), *contracts_file(case), *map(str, files), "--", std,
            f"-I{include}"]
-    if "--silver" in extra and shutil.which("systemd-run"):
-        # Bevisaren (cbmc/esbmc) under minnestak: utan det dödar oomd terminalen.
-        cmd = ["systemd-run", "--user", "--scope", "-q", "-p", "MemoryMax=8G", "-p", "MemorySwapMax=0", *cmd]
+    if "--silver" in extra:
+        cmd = [*memory_cap(), *cmd]
     proc = subprocess.run(cmd, capture_output=True, text=True)
     exp, violations = expectations(files, prover)
     want_rc = 1 if violations else 0
