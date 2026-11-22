@@ -55,6 +55,10 @@ Save this as `example.cpp` in the Pork repository:
 ```cpp
 #include <pork/annotations.hpp>
 
+int add(int a, int b) {
+  return a + b;
+}
+
 int ratio(int x, int log_level) {
   PORK_PRE(x > 0);
   PORK_DEPENDS_RESULT(x);
@@ -67,11 +71,16 @@ int ratio(int x, int log_level) {
 ./build/pork --silver example.cpp -- -std=c++20 -Iinclude
 ```
 
-The first command reports `ratio: bronze`. The function is Stone, and its
-result depends only on `x`, as `PORK_DEPENDS_RESULT` requires. The second
-reports `ratio: silver`. The precondition rules out division by zero.
+The first command reports `add: stone` and `ratio: bronze`. Both functions
+are Stone, and the result of `ratio` depends only on `x`, as
+`PORK_DEPENDS_RESULT` requires. The second command reports `ratio: silver`:
+the precondition rules out division by zero. For `add` it reports
+`add: stone: not silver: arithmetic overflow on signed + in a + b`, because
+nothing limits the inputs. The exit status is still 0: a verdict only fails
+the run when the function carries a requirement such as `PORK_STONE` or
+`PORK_DEPENDS`.
 
-Change the return statement to `return 100 / x + log_level;` and run the
+Change the return statement in `ratio` to `return 100 / x + log_level;` and run the
 first command again. Pork reports `ratio: stone: not bronze: the result
 depends on log_level, which PORK_DEPENDS does not allow` and exits with
 status 1.
