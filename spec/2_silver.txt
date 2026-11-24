@@ -118,7 +118,8 @@ SLV-35  std::string model
 std::string (std::basic_string<char>, a trusted type, STN-4) shall be a
 std::vector of char (SLV-24): `{size, data[N]}` with the assumption
 `std::string size <= N`. A string literal shall be a string of its
-characters; == and != shall compare length and characters; +=, + and a
+characters up to the first NUL (it reaches the string through a
+`const char*` parameter); == and != shall compare length and characters; +=, + and a
 literal longer than N shall be a finding (raise --vector-bound).
 
 SLV-25  std::variant model

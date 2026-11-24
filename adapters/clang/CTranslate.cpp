@@ -973,10 +973,12 @@ class Translator {
   }
 
   // "abc" som std::string: en sammansatt literal. Längre än N: fyndet att
-  // strängen inte ryms, och bara de första N tecknen.
+  // strängen inte ryms, och bara de första N tecknen. Literalen når strängen
+  // genom en const char*-parameter, så den slutar vid första NUL ("a\0b" är "a").
   Text stringLiteral(const ClassTemplateSpecializationDecl& spec, const StringLiteral& lit) {
     TRY(name, cType(ctx_.getCanonicalTagType(&spec)));
     llvm::StringRef bytes = lit.getBytes();
+    bytes = bytes.take_until([](char ch) { return ch == '\0'; });
     std::size_t n = std::min<std::size_t>(bytes.size(), options_.vectorBound);
     std::string data;
     for (std::size_t i = 0; i < n; ++i)
