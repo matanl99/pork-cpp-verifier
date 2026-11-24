@@ -1480,9 +1480,76 @@ class LoanChecker {
     } else {
       for (const Reach& w : refs)
         if (w.written && !w.loanSet && w.invalidates) change(w.places, call, s);
+      if (effect == Effect::standard) storedByCall(ops, md, call, s);
     }
     if (port && effect == Effect::standard) changeOutside(call, s, fd ? fd->getQualifiedNameAsString() : "?");
     change(through, call, s);
+  }
+
+  // Ett anrop utan sammanfattning kan lagra lån i ett lånebärande objekt som det
+  // får ändra (`void point_at(Cursor& out, const std::string& s) { out.text = s; }`):
+  // efter anropet lånar objektet också det som de andra operanderna når. En
+  // lokal variabel får lånen; en parameter eller *this får inga lån av något som
+  // inte överlever funktionen, och sammanfattningen blir okänd (anroparna ser då
+  // samma effekt); annat kan modellen inte följa.
+  void storedByCall(const std::vector<Operand>& ops, const CXXMethodDecl* md, const Expr* call, State& s) {
+    for (std::size_t k = 0; k < ops.size(); ++k) {
+      const Operand& o = ops[k];
+      QualType target;
+      std::vector<PlaceRef> where;
+      if (o.object) {
+        if (md != nullptr && md->isConst()) continue;
+        target = o.e->getType()->isPointerType() ? o.e->getType()->getPointeeType() : o.e->getType();
+        where = operandPlaces(o, s);
+      } else if (!o.param.isNull() && o.param->isLValueReferenceType()) {
+        if (o.param->getPointeeType().isConstQualified()) continue;
+        target = o.param->getPointeeType();
+        where = places(o.e, s);
+      } else if (!o.param.isNull() && o.param->isPointerType()) {
+        if (o.param->getPointeeType().isConstQualified()) continue;
+        target = o.param->getPointeeType();
+        where = values(o.e, s);
+      } else if (o.param.isNull() && o.e->isGLValue()) {  // variadiskt/okänt
+        target = o.e->getType();
+        where = places(o.e, s);
+      } else {
+        continue;
+      }
+      if (!types_.loanBearing(target)) continue;
+      std::vector<PlaceRef> incoming;
+      for (std::size_t j = 0; j < ops.size(); ++j) {
+        if (j == k) continue;
+        const Operand& other = ops[j];
+        if (operandLoanBearing(other)) {
+          auto held = other.object && other.e->getType()->isPointerType()
+                          ? heldIn(values(other.e, s), other.e->getType()->getPointeeType(), other.e, s)
+                      : other.e->isGLValue() ? heldBy(other.e, s)
+                                             : values(other.e, s);
+          incoming.insert(incoming.end(), held.begin(), held.end());
+        }
+        if (byReference(other))
+          for (PlaceRef r : operandPlaces(other, s)) {
+            r.place = opened(r.place);
+            r.loan = -1;
+            incoming.push_back(r);
+          }
+      }
+      if (incoming.empty()) continue;
+      for (const PlaceRef& w : where) {
+        const auto* vd = dyn_cast_or_null<VarDecl>(w.place.root.decl);
+        if (w.place.root.kind == Root::object && w.place.path.empty() && vd != nullptr && vd->hasLocalStorage() &&
+            !vd->getType()->isReferenceType()) {
+          std::set<int> more = bind(incoming);
+          s[vd].insert(more.begin(), more.end());
+        } else if (w.place.root.kind == Root::referent || w.place.root.kind == Root::self) {
+          if (checking_) record_.known = false;
+          escape(incoming, call, "may store");
+        } else {
+          return fail(call, "cannot follow the loans the call may store in '" + text(w.place) + "'");
+        }
+        if (error_) return;
+      }
+    }
   }
 
   // --- Satser och element ----------------------------------------------------
@@ -1584,14 +1651,22 @@ class LoanChecker {
       const FunctionDecl* fd = c->getDirectCallee();
       std::vector<Operand> ops = operands(c, fd);
       callEffects(c, fd, ops, s);
-      // Tilldelning till en lånebärande lokal variabel: it = m.find(k).
+      // Tilldelning till en lånebärande lokal variabel: it = m.find(k). Till
+      // något annat (ett fält, `out.text = t`): som en inbyggd tilldelning, en
+      // lagring som modellen kontrollerar men inte följer (storeOutside).
       if (const auto* oc = dyn_cast<CXXOperatorCallExpr>(c);
-          oc != nullptr && oc->getOperator() == OO_Equal && oc->getNumArgs() == 2)
-        if (const auto* dr = dyn_cast<DeclRefExpr>(strip(oc->getArg(0))))
-          if (const auto* vd = dyn_cast<VarDecl>(dr->getDecl());
-              vd != nullptr && vd->hasLocalStorage() && !vd->getType()->isReferenceType() &&
-              types_.loanBearing(vd->getType()))
-            s[vd] = bind(oc->getArg(1)->isGLValue() ? heldBy(oc->getArg(1), s) : values(oc->getArg(1), s));
+          oc != nullptr && oc->getOperator() == OO_Equal && oc->getNumArgs() == 2 &&
+          types_.loanBearing(oc->getArg(0)->getType())) {
+        const auto* dr = dyn_cast<DeclRefExpr>(strip(oc->getArg(0)));
+        const auto* vd = dr != nullptr ? dyn_cast<VarDecl>(dr->getDecl()) : nullptr;
+        std::vector<PlaceRef> rhs = oc->getArg(1)->isGLValue() ? heldBy(oc->getArg(1), s) : values(oc->getArg(1), s);
+        if (vd != nullptr && vd->hasLocalStorage() && !vd->getType()->isReferenceType()) {
+          s[vd] = bind(rhs);
+        } else {
+          escape(rhs, st, "stores");
+          if (!error_) storeOutside(places(oc->getArg(0), s), rhs, st);
+        }
+      }
       return;
     }
     if (const auto* c = dyn_cast<CXXConstructExpr>(st)) {

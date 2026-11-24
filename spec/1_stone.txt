@@ -827,3 +827,10 @@ Two live references into the same object inside one function are not
 rejected by the loan model (design decision: G3 applies at
 calls, where the callee assumes distinct parameters; inside the function
 Silver models the alias).
+A loan stored in something other than a local variable (a field, through an
+assignment operator as well as a built-in assignment) shall not be a loan of
+a local or a temporary. A call without a summary may store loans in any
+loan-bearing object it may change (a non-const reference or pointer argument,
+the object of a non-const method): afterwards a local such object also
+borrows what the other operands reach, and a parameter or *this shall not
+receive a loan of anything that does not outlive the function.
