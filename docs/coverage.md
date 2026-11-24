@@ -24,7 +24,7 @@ Legend:
 | Area | Stone | Bronze | Silver | Not covered, assumptions | Rules |
 |---|---|---|---|---|---|
 | Dangling references, use after free, invalidated iterators | Ruled out (loan model) | — | Relies on Stone | Library operations follow `summaries/std.txt`. Owned-array and vector indices are assumed in bounds by the loan model (see out-of-bounds access). | STN-31–36, STN-39, STN-62, STN-74 |
-| Aliasing between arguments, `*this` and hidden references | Ruled out | — | Relies on Stone | Calls through ports and context references count as side effects. | STN-20, STN-21, STN-26, STN-53–55, STN-62 |
+| Aliasing between arguments, `*this` and hidden references | Ruled out | — | Relies on Stone | Calls through ports and context references count as side effects. Calls from outside the analysis are not checked: such a caller can pass the same object twice. | STN-20, STN-21, STN-26, STN-53–55, STN-62 |
 | Raw pointers and ownership | Ruled out, except loan values (`get_if`, iterators, span), `unique_ptr` without raw-pointer transfer | — | — | `std::unique_ptr` is a trusted type. | STN-3, STN-12, STN-19, STN-39, STN-69 |
 | Null dereference | Not checked | — | Checked (`get_if`, nullable return) | Pointer forms Silver does not translate give `not silver`. | SLV-12, SLV-27 |
 | Out-of-bounds access: `std::vector`, `std::span`, `std::string` | Not checked | — | Checked | Proved only up to `--vector-bound` elements (reported assumption). Growing past the bound is a finding. | SLV-13, SLV-15, SLV-22, SLV-24, SLV-35 |
@@ -39,8 +39,9 @@ Legend:
 | Signed integer overflow | — | — | Checked | | SLV-5 |
 | Division and remainder by zero (integer and floating point) | — | — | Checked | | SLV-6, SLV-7 |
 | Shifts out of range | — | — | Checked | | SLV-8 |
-| Floating-point overflow to ±inf, NaN results | — | — | Checked | Inputs are assumed finite. A caller outside the analysis can still pass NaN or inf. | SLV-9, SLV-10, SLV-22 |
+| Floating-point overflow to ±inf, NaN results | — | — | Checked, also in a narrowing conversion (`double` to `float`) | Inputs are assumed finite. A caller outside the analysis can still pass NaN or inf. | SLV-9, SLV-10, SLV-22 |
 | Float to integer conversion that does not fit | — | — | Checked | | SLV-11 |
+| Enum values | A switch with a case for every enumerator can take no case | Same path as Stone | A conversion outside the range of an enum without a fixed type is checked | An enum with a fixed type can hold any value of that type. Silver assumes inputs only within the enum's range. | STN-13, SLV-11, SLV-22 |
 | Unsigned wraparound, lossy integer conversions | — | — | Checked only with `--silver-strict` | Both are defined behaviour in C++, so plain Silver allows them. | SLV-29, SLV-30 |
 | Floating-point rounding and accuracy | — | — | — | Not covered. Write a `PORK_POST` with a bound to state an accuracy requirement. | |
 
@@ -65,7 +66,7 @@ Legend:
 
 | Area | Stone | Bronze | Silver | Not covered, assumptions | Rules |
 |---|---|---|---|---|---|
-| Non-termination | — | — | Checked: every loop and recursion ends within `--unwind` | A function that needs more iterations is not Silver, so Silver means bounded. | SLV-16 |
+| Non-termination | — | — | Checked: every loop and recursion ends within `--unwind` | A function that needs more iterations is not Silver, so Silver means bounded. A function whose contracts lead back to itself is not Silver. | SLV-16, SLV-18 |
 | Exceptions | Only `throw` of a `<stdexcept>` type with a literal; no try/catch | Normal return only | Checked: no reachable `throw` | Exceptions from the library itself (for example allocation failure) are not modelled. | STN-13, STN-83, SLV-43 |
 | Preconditions at calls | Placement, and a pure condition | — | Checked at every analysed call | Callers outside the analysis are not checked. | STN-42, SLV-17, SLV-20, SLV-32 |
 | Functional correctness | — | Dependencies only | As far as `PORK_POST`, `PORK_INVARIANT` and `assert` state it | Nothing beyond what the contracts say. | SLV-18, SLV-19, SLV-33 |
@@ -96,7 +97,9 @@ above.
 - **Trusted code.** Trusted functions and types (trust file,
   `pork::trusted`, the standard library) are assumed correct and are
   reported as assumptions. Silver also assumes that their C contracts are
-  correct (SLV-21).
+  correct (SLV-21). Stone does not check the preconditions of trusted
+  functions: `std::sort` with a comparator that is not a strict weak
+  ordering is Stone and can overflow a buffer inside the library.
 - **Library effects.** The loan model takes the effects of std functions
   from `summaries/std.txt`. A wrong line there is a wrong guarantee.
 - **The Silver model.** Silver proves the generated C (SLV-2). It assumes
