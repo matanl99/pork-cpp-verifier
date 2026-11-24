@@ -159,7 +159,8 @@ STN-76  Returning a reference into *this
 A non-const member function returning `T&`, where T is a value type other
 than its own class (`int& operator[](int i)`), shall return only a path into
 `*this`: a field, an element of a field through an accessor, a call of such
-a function on `*this`, or `c ? a : b` of such paths; never through a
+a function on `*this`, or `c ? a : b` of such paths (each branch may be a
+call that changes *this, as the whole return value may); never through a
 reference member (`return ctx.x;`), whose object is not the caller's. A call of it (not
 trusted, not std) is a path to the whole object it was called on, written
 when the result is written: `s[1] = 9` and `++s[1]` change s, and

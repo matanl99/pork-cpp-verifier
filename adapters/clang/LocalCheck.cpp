@@ -1113,7 +1113,7 @@ class Checker {
       }
       if (memberRef_) {  // STN-76
         if (auto r = memberRefSource(rs->getRetValue())) return r;
-        return effectAllowed(rs->getRetValue());
+        return effectAllowedInBranches(rs->getRetValue());
       }
       if (pointerReturn_) return pointerReturnSource(rs->getRetValue());
       if (refReturn_) {
@@ -1614,6 +1614,19 @@ class Checker {
       return std::nullopt;
     }
     return expr(lhs);
+  }
+
+  // Som effectAllowed, men i `c ? a : b` gäller det varje gren för sig: bara en
+  // av dem körs, efter villkoret (STN-76: `return c ? x : v[0];`).
+  Reason effectAllowedInBranches(const Expr* e) {
+    const Expr* inner = stripNoOp(e);
+    if (const auto* w = dyn_cast<ExprWithCleanups>(inner)) inner = stripNoOp(w->getSubExpr());
+    if (const auto* c = dyn_cast<ConditionalOperator>(inner)) {
+      if (auto r = expr(c->getCond())) return r;
+      if (auto r = effectAllowedInBranches(c->getTrueExpr())) return r;
+      return effectAllowedInBranches(c->getFalseExpr());
+    }
+    return effectAllowed(e);
   }
 
   // Granska e där den yttersta noden (genom genomskinliga omslag som
