@@ -1749,6 +1749,15 @@ class Checker {
         unassigned_.insert(vd);
         continue;
       }
+      // `int& v = vec[1].age_;`: accessorn i roten är en skrivning till
+      // behållaren (en väg), som `vec[1].age_ = 3;` (STN-37), inte ett anrop
+      // med sidoeffekt inuti initieraren.
+      if (ref != nullptr && !value.isConstQualified()) {
+        const Expr* init = vd->getInit();
+        if (const auto* w = dyn_cast<ExprWithCleanups>(init)) init = w->getSubExpr();
+        init = stripNoOp(init);
+        if (accessorObject(init) == nullptr && accessorRoot(init) != nullptr && pathOf(init)) markWrite(init);
+      }
       initializing_ = vd;
       Reason r = effectAllowed(vd->getInit());
       initializing_ = nullptr;

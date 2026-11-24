@@ -381,6 +381,8 @@ an accessor only where summaries/std.txt says it does not write (`reads`,
 function with one argument that returns `T&` into it and has `access` in
 summaries/std.txt is an accessor of that argument (`std::get<0>(p) = x`);
 for Bronze, std::get<0>/<1> on a std::pair is the field first/second.
+A non-const local reference bound to a path under an accessor
+(`int& v = vec[1].age_;`) is such a write, like `A& item = vec[1];`.
 
 STN-38  std::vector<bool> elements
 Reading `v[i]` as bool and assigning `v[i] = b` on a `std::vector<bool>`
