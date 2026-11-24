@@ -183,6 +183,8 @@ Use a fresh output directory to retain files from multiple runs.
 - [Analysis flow diagram](docs/analysis-flow.svg) ([Graphviz DOT source](docs/analysis-flow.dot)).
 - [Verification confidence matrices](docs/verification-confidence.md), covering
   what each level promises, how it is tested, and where the evidence ends.
+- [What each level covers](docs/coverage.md), by kind of error, including
+  what no level covers.
 - [How Pork checks rules from the Clang AST](docs/verification-confidence.md#how-pork-checks-rules-from-the-clang-ast),
   with examples for Stone, Bronze, and Silver.
 - [Stone's loan model](docs/stone_model.md), [Bronze data flow](docs/bronze.md),
