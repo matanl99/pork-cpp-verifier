@@ -1,6 +1,7 @@
 #include "FlowBuild.hpp"
 
 #include "Dispatch.hpp"
+#include "EnumSwitch.hpp"
 #include "LocalCheck.hpp"
 
 #include <clang/AST/ExprCXX.h>
@@ -64,8 +65,9 @@ class Builder {
     opts.AddImplicitDtors = true;
     opts.AddTemporaryDtors = true;
     AnalysisDeclContext* ac = mgr.getContext(&fd_);
-    const CFG* cfg = ac != nullptr ? ac->getCFG() : nullptr;
+    CFG* cfg = ac != nullptr ? ac->getCFG() : nullptr;
     if (cfg == nullptr) return fail("cannot build the control-flow graph");
+    restoreCoveredSwitchDefaults(*cfg);
     pm_ = std::make_unique<ParentMap>(fd_.getBody());
     if (const auto* ctor = dyn_cast<CXXConstructorDecl>(&fd_))
       for (const CXXCtorInitializer* init : ctor->inits())

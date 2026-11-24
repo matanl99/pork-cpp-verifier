@@ -25,6 +25,7 @@
 
 #include "LoanCheck.hpp"
 
+#include "EnumSwitch.hpp"
 #include "LocalCheck.hpp"
 
 #include <clang/AST/ASTContext.h>
@@ -1734,10 +1735,11 @@ Reason LoanContext::Impl::run(const FunctionDecl& fd) {
     opts.AddLifetime = true;
     opts.AddInitializers = true;
     AnalysisDeclContext* ac = mgr.getContext(&fd);
-    const CFG* cfg = ac != nullptr ? ac->getCFG() : nullptr;
+    CFG* cfg = ac != nullptr ? ac->getCFG() : nullptr;
     if (cfg == nullptr) {
       verdict = std::string("cannot build the control-flow graph");
     } else {
+      restoreCoveredSwitchDefaults(*cfg);
       LoanChecker checker(fd, liveAfter(*ac), *this, summary);
       verdict = checker.run(*cfg, *ac);
     }

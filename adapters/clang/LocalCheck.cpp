@@ -2,6 +2,7 @@
 
 #include "Assert.hpp"
 #include "Dispatch.hpp"
+#include "EnumSwitch.hpp"
 #include "LoanCheck.hpp"
 #include "Move.hpp"
 
@@ -3409,6 +3410,7 @@ std::optional<std::set<const VarDecl*>> maybeUnassignedLocals(const FunctionDecl
   AnalysisDeclContext* ac = mgr.getContext(&fd);
   CFG* cfg = ac != nullptr ? ac->getCFG() : nullptr;
   if (cfg == nullptr) return std::nullopt;
+  restoreCoveredSwitchDefaults(*cfg);
   UnassignedUses handler;
   UninitVariablesAnalysisStats stats{};
   runUninitializedVariablesAnalysis(fd, *cfg, *ac, handler, stats);
@@ -3428,6 +3430,7 @@ std::map<const Stmt*, std::set<const VarDecl*>> liveAfterStatements(const Functi
   mgr.getCFGBuildOptions().AddInitializers = true;
   AnalysisDeclContext* ac = mgr.getContext(&fd);
   if (ac == nullptr || ac->getCFG() == nullptr) return out;
+  restoreCoveredSwitchDefaults(*ac->getCFG());
   std::unique_ptr<LiveVariables> lv = LiveVariables::computeLiveness(*ac, false);
   if (lv == nullptr) return out;
   struct Collect : LiveVariables::Observer {
@@ -3524,8 +3527,9 @@ Reason cfgAccounting(const FunctionDecl& fd, const std::map<std::string, Callee>
   opts.AddCXXDefaultInitExprInCtors = true;
   opts.AddCXXDefaultInitExprInAggregates = true;
   AnalysisDeclContext* ac = mgr.getContext(&fd);
-  const CFG* cfg = ac != nullptr ? ac->getCFG() : nullptr;
+  CFG* cfg = ac != nullptr ? ac->getCFG() : nullptr;
   if (cfg == nullptr) return std::string("G1: cannot build the control-flow graph");
+  restoreCoveredSwitchDefaults(*cfg);
   // seen_ delas mellan elementen: en användarfunktion som setts en gång har
   // antingen godkänts (finns i callees) eller redan gett avslag, så den
   // behöver inte prövas igen.

@@ -202,6 +202,9 @@ condition variable), for, range-for, while, do, switch/case/default, break,
 continue, declarations, expression statements and `throw` of a <stdexcept>
 type (STN-83). The analysis shall reject all others (goto, try/catch, rethrow,
 asm, labels, coroutines, ...).
+A switch without default may take no case, also when it has a case for every
+enumerator of an enum (the enum can hold other values, `static_cast<E>(7)`);
+every analysis (STN-17, STN-62, BRZ-2) shall include that path.
 
 STN-14  Local variables
 A local variable shall be of a value type (or a reference, STN-31..36, a
