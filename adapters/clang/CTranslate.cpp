@@ -1719,6 +1719,11 @@ class Translator {
         }
         [[fallthrough]];
       case CK_FloatingCast:
+        if (c.getCastKind() == CK_FloatingCast && ctx_.getFloatingTypeOrder(c.getType(), sub->getType()) < 0) {
+          TRY(x, expr(sub));
+          return narrowFloat(sub->getType(), c.getType(), x);
+        }
+        [[fallthrough]];
       case CK_IntegralToFloating:
       case CK_IntegralToBoolean:
       case CK_FloatingToBoolean: {
@@ -1836,6 +1841,21 @@ class Translator {
       cond = "(unsigned long long)pork_cv <= " + hi + "ULL";
     }
     return checkedConversion(f, t, x, cond, "integer conversion out of range");
+  }
+
+  // Ett smalare flyttal (double -> float): ett ändligt värde utanför målets
+  // intervall är odefinierat ([conv.double]); i C blir det ±inf (SLV-9).
+  Text narrowFloat(QualType from, QualType to, const std::string& x) {
+    TRY(f, cType(from));
+    TRY(t, cType(to));
+    const auto* bt = to.getCanonicalType()->getAs<BuiltinType>();
+    const char* sfx = bt == nullptr                                  ? nullptr
+                      : bt->getKind() == BuiltinType::Float          ? "f"
+                      : bt->getKind() == BuiltinType::Double         ? "d"
+                                                                     : nullptr;
+    if (sfx == nullptr) return fail("floating-point conversion to " + to.getAsString());
+    return checkedConversion(f, t, x, std::string("!__CPROVER_isinf") + sfx + "((" + t + ")pork_cv)",
+                             "floating-point conversion overflow");
   }
 
   // Flyttal -> heltal är odefinierat om värdet inte ryms.

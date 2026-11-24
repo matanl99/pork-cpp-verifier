@@ -25,6 +25,8 @@ constexpr const char* kCompat = R"(/* pork: CBMC builtins mapped to ESBMC */
 #define __CPROVER_isinff(x) __builtin_isinf(x)
 #define __CPROVER_isnand(x) __builtin_isnan(x)
 #define __CPROVER_isinfd(x) __builtin_isinf(x)
+#define __CPROVER_isnanld(x) __builtin_isnan(x)
+#define __CPROVER_isinfld(x) __builtin_isinf(x)
 )";
 
 // Flaggorna till esbmc (följt av antalet varv för --unwind).

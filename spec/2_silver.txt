@@ -45,7 +45,8 @@ SLV-6  Integer division and remainder by zero
 SLV-7  Floating-point division by zero
 SLV-8  Shifts out of range (negative or too large distance, overflowing
        result)
-SLV-9  Floating-point overflow to +-inf
+SLV-9  Floating-point overflow to +-inf, also in a narrowing conversion
+       (double to float, long double to double)
 SLV-10  NaN results
 SLV-11  Float to integer conversion of a value that does not fit, and an integer
         conversion to an enum without a fixed type outside its range of values
