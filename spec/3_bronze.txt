@@ -40,7 +40,11 @@ output and of every part of it lies within an allowed place. A place covers
 its parts (`world.pitch` covers `world.pitch.length`). An output that may
 keep its value on some normal return depends on its own entry value, which
 must then be allowed explicitly. An overestimate in the derived flow counts
-as a dependency: pork cannot tell it from a real one.
+as a dependency: pork cannot tell it from a real one. A call through a
+port or interface reference (STN-51, STN-52) depends on the reference; an
+allowed port covers everything it can reach, also through the references its
+implementations hold (an implementation of `k` that refers to the argument
+`c`: the output may then change with `c` through `k`).
 
 BRZ-3  No flow, no Bronze  [rejects]
 When the flow of the function is not computed (docs/bronze.md, `not

@@ -59,7 +59,7 @@ Legend:
 
 | Area | Stone | Bronze | Silver | Not covered, assumptions | Rules |
 |---|---|---|---|---|---|
-| An output depends on an input it should not | — | Checked where `PORK_DEPENDS` is declared | Requires Bronze | Without a requirement nothing is promised. A requirement can be widened or removed; the verdict does not show that it changed. Only normal return is described. Overestimates count as dependencies. | BRZ-1–6 |
+| An output depends on an input it should not | — | Checked where `PORK_DEPENDS` is declared | Requires Bronze | Without a requirement nothing is promised. An allowed port covers everything its implementations can reach, also other arguments they hold references to. A requirement can be widened or removed; the verdict does not show that it changed. Only normal return is described. Overestimates count as dependencies. | BRZ-1–6 |
 | Flow that cannot be computed (pointers, views, lambdas as values) | — | No Bronze for a function with a requirement | — | | BRZ-3 |
 
 ## Control flow and contracts
