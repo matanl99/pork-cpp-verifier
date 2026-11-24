@@ -1695,6 +1695,7 @@ class Translator {
         return fail("assignment to a pointer");
       TRY(l, expr(b->getLHS()));
       TRY(r, expr(b->getRHS()));
+      if (auto shifted = signedShiftLeft(*b, l, r)) return *shifted;
       if (const auto* ca = dyn_cast<CompoundAssignOperator>(b))
         if (auto narrowed = narrowCompound(*ca, l, r)) return *narrowed;
       return "(" + l + " " + b->getOpcodeStr().str() + " " + r + ")";
@@ -1993,6 +1994,34 @@ class Translator {
     }
     return "({ " + ct + "* pork_p = &(" + x + "); " + ct + " pork_old = *pork_p; *pork_p = " + back + "; " +
            (u.isPrefix() ? "*pork_p" : "pork_old") + "; })";
+  }
+
+  // a << b med signed a i C++20 och senare ([expr.shift]): värdet är a × 2^b modulo
+  // 2^N, så ett resultat som inte ryms är definierat. Bara ett skiftavstånd som
+  // är negativt eller minst bredden är odefinierat. I C och före C++20 är
+  // överspillet odefinierat, och med --silver-strict räknas det som ett ändrat
+  // värde: då står skiftet kvar som i C, och bevisaren kontrollerar det.
+  std::optional<Text> signedShiftLeft(const BinaryOperator& b, const std::string& l, const std::string& r) {
+    if (b.getOpcode() != BO_Shl && b.getOpcode() != BO_ShlAssign) return std::nullopt;
+    if (!ctx_.getLangOpts().CPlusPlus20 || options_.strict) return std::nullopt;
+    const auto* ca = dyn_cast<CompoundAssignOperator>(&b);
+    QualType comp = ca != nullptr ? ca->getComputationResultType() : b.getType();
+    if (!comp->isSignedIntegerType()) return std::nullopt;
+    auto cc = cType(comp);
+    auto cu = cType(ctx_.getCorrespondingUnsignedType(comp));
+    if (!cc) return Text(std::unexpected(cc.error()));
+    if (!cu) return Text(std::unexpected(cu.error()));
+    std::string width = std::to_string(ctx_.getIntWidth(comp));
+    auto shift = [&](const std::string& value) {
+      return "({ " + *cc + " pork_sa = " + value + "; long long pork_sd = (long long)(" + r +
+             "); __CPROVER_assert(pork_sd >= 0 && pork_sd < " + width +
+             ", \"shift distance out of range\"); (" + *cc + ")((" + *cu + ")pork_sa << pork_sd); })";
+    };
+    if (ca == nullptr) return Text(shift(l));
+    auto ct = cType(b.getLHS()->getType());
+    if (!ct) return Text(std::unexpected(ct.error()));
+    return Text("({ " + *ct + "* pork_p = &(" + l + "); *pork_p = (" + *ct + ")" + shift("(" + *cc + ")*pork_p") +
+                "; *pork_p; })");
   }
 
   // x op= y räknas i beräkningstypen och konverteras sedan tillbaka till x:s typ

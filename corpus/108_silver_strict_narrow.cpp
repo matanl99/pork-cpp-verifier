@@ -37,3 +37,20 @@ short add_short_bounded(short a) {
   if (a < 100) a += 1;
   return a;
 }
+
+// Vänsterskift av signed (SLV-8): med --silver-strict räknas ett resultat som
+// inte ryms och ett negativt a som ändrade värden (definierade sedan C++20, se
+// 109_silver_shift.cpp).
+
+// rules: SLV-8
+// expect: stone: not silver: arithmetic overflow on signed shl
+// expect[esbmc]: stone: not silver: shift distance, operand or result out of range
+int top_bit(int a) {
+  if (a >= 0 && a < 2) return a << 31;
+  return 0;
+}
+
+// rules: SLV-8
+// expect: stone: not silver: shift operand is negative
+// expect[esbmc]: stone: not silver: shift distance, operand or result out of range
+int negative_operand(int a) { return a << 1; }

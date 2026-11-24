@@ -43,8 +43,9 @@ caller. Calls of functions with a proved PORK_POST use the contract
 SLV-5  Signed integer overflow
 SLV-6  Integer division and remainder by zero
 SLV-7  Floating-point division by zero
-SLV-8  Shifts out of range (negative or too large distance, overflowing
-       result)
+SLV-8  Shifts out of range (negative or too large distance; for C and C++
+       before C++20, and with --silver-strict, also a left shift of a
+       negative value or with an overflowing result, which C++20 defines)
 SLV-9  Floating-point overflow to +-inf, also in a narrowing conversion
        (double to float, long double to double)
 SLV-10  NaN results
