@@ -7,7 +7,7 @@ namespace {
 using Kind = Verdict::Kind;
 
 bool isTrustedWithoutDefinition(const Callee& c, const TrustList& trust) {
-  return c.trusted || trust.trustsFunction(c.qualifiedName);
+  return c.trusted || trust.trustsFunction(c.qualifiedName) || (!c.alias.empty() && trust.trustsFunction(c.alias));
 }
 
 // Kända implementationer av en virtuell metod (usr): metoden själv, om den

@@ -209,7 +209,29 @@ const Expr* postConditionExpr(const LambdaExpr& le) {
 // Namnet som matchas mot trust-listan: kvalificerat, utan templateargument.
 // Medlemmar i en klasstemplate-instans får mallens namn:
 // std::optional<int>::has_value -> "std::optional::has_value".
+// En C-funktion i det globala namnrummet (glibc:s ::sqrt) som std exporterar
+// med en using-deklaration (`namespace std { using ::sqrt; }` i <cmath>).
+static bool reexportedByStd(const FunctionDecl& fd) {
+  if (!fd.getDeclContext()->getRedeclContext()->isTranslationUnit() || fd.getDeclName().isEmpty()) return false;
+  ASTContext& ctx = fd.getASTContext();
+  if (!ctx.getSourceManager().isInSystemHeader(fd.getLocation())) return false;
+  for (const NamedDecl* d : ctx.getTranslationUnitDecl()->lookup(&ctx.Idents.get("std"))) {
+    const auto* ns = dyn_cast<NamespaceDecl>(d);
+    if (ns == nullptr) continue;
+    for (const NamedDecl* m : ns->getPrimaryContext()->lookup(fd.getDeclName()))
+      if (const auto* shadow = dyn_cast<UsingShadowDecl>(m);
+          shadow != nullptr && shadow->getTargetDecl()->getCanonicalDecl() == fd.getCanonicalDecl())
+        return true;
+  }
+  return false;
+}
+
+std::string trustAlias(const FunctionDecl& fd) {
+  return reexportedByStd(fd) ? fd.getQualifiedNameAsString() : std::string();
+}
+
 std::string trustName(const FunctionDecl& fd) {
+  if (reexportedByStd(fd)) return "std::" + fd.getNameAsString();
   if (const auto* md = dyn_cast<CXXMethodDecl>(&fd)) {
     if (const auto* spec = dyn_cast<ClassTemplateSpecializationDecl>(md->getParent())) {
       const ClassTemplateDecl* tmpl = spec->getSpecializedTemplate();
@@ -1163,9 +1185,9 @@ class Checker {
       return "the argument of " + type + " must be a string literal";
     std::string usr = usrOf(*ce->getConstructor());
     if (usr.empty()) return std::string("throws (no USR)");
-    callees_.emplace(usr, Callee{type + "::" + rd->getNameAsString(), "throws " + type, true});
+    callees_.emplace(usr, Callee{type + "::" + rd->getNameAsString(), "throws " + type, true, ""});
     if (const CXXDestructorDecl* d = rd->getDestructor())
-      if (std::string du = usrOf(*d); !du.empty()) callees_.emplace(du, Callee{displayName(*d), "throws " + type, true});
+      if (std::string du = usrOf(*d); !du.empty()) callees_.emplace(du, Callee{displayName(*d), "throws " + type, true, ""});
     return std::nullopt;
   }
 
@@ -2292,11 +2314,11 @@ class Checker {
     std::string usr = usrOf(callee);
     if (usr.empty()) return "calls '" + callee.getNameAsString() + "' (no USR)";
     if (dispatch) {
-      callees_.emplace(std::string(kDispatchPrefix) + usr, Callee{displayName(callee), "dispatch " + trustName(callee), true});
+      callees_.emplace(std::string(kDispatchPrefix) + usr, Callee{displayName(callee), "dispatch " + trustName(callee), true, ""});
       return std::nullopt;
     }
     callees_.emplace(usr, Callee{displayName(callee), trustName(callee),
-                                 hasAnnotation(callee, "pork::trusted")});
+                                 hasAnnotation(callee, "pork::trusted"), trustAlias(callee)});
     // STN-67: egen kod som std-funktionen kör är också anrop.
     if (types_.context().getSourceManager().isInSystemHeader(callee.getLocation())) return recordUserCode(callee);
     return std::nullopt;
@@ -2309,7 +2331,7 @@ class Checker {
     for (const FunctionDecl* user : userCode_.from(f)) {
       std::string u = usrOf(*user);
       if (u.empty()) return "calls '" + user->getNameAsString() + "' (no USR)";
-      callees_.emplace(u, Callee{displayName(*user), trustName(*user), hasAnnotation(*user, "pork::trusted")});
+      callees_.emplace(u, Callee{displayName(*user), trustName(*user), hasAnnotation(*user, "pork::trusted"), trustAlias(*user)});
     }
     return std::nullopt;
   }

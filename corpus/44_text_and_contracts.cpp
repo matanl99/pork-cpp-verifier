@@ -37,7 +37,8 @@ int calls = 0;
 // expect: not-stone: uses variable 'calls' with static storage
 int read_calls() { return calls; }
 
-// glibc deklarerar round globalt (std::round är ::round): trust-namnet är "round".
+// glibc deklarerar round globalt och <cmath> exporterar den med `using ::round;`
+// i std: namnet är std::round, och trust-filen godtar också "round".
 // rules: SLV-21
-// expect: silver: assuming round
+// expect: silver: assuming std::round
 double cents(double v) { PORK_PRE(v >= -1e9 && v <= 1e9); return std::round(v * 100.0) / 100.0; }

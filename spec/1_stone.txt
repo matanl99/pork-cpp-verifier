@@ -289,7 +289,9 @@ user code it runs. Lambdas are checked where they are written (STN-40).
 STN-24  Trusted functions
 Where a function without definition is listed in the trust file, or a
 function is annotated `pork::trusted`, it shall be trusted and reported as
-an assumption of every caller (transitively). A trust-file entry shall not
+an assumption of every caller (transitively). A C library function that std
+re-exports with a using-declaration (`namespace std { using ::sqrt; }`) is
+named `std::sqrt`; the trust file may also name it `sqrt`. A trust-file entry shall not
 apply to a function with a definition in the analysed sources. An annotated
 definition shall get the verdict `trusted` and its body shall not be
 analysed.

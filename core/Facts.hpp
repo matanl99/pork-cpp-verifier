@@ -26,6 +26,8 @@ struct Callee {
   std::string qualifiedName;  // utan templateargument, matchas mot trust-listan och
                               // redovisas som antagande: "std::clamp", "std::optional::reset"
   bool trusted = false;       // deklarationen är märkt pork::trusted
+  std::string alias;          // ett annat namn som trust-listan också kan betro:
+                              // "sqrt" för "std::sqrt" (glibc:s ::sqrt via using i std)
 };
 
 // Aliasfrågor mellan en port och dess implementationer (STN-55), som inte går

@@ -14,7 +14,7 @@ double ext_unknown(double x);  // inte betrodd
 float abs_f(float x) { return std::fabs(x); }
 
 // rules: STN-24
-// expect: stone: assuming hypot
+// expect: stone: assuming std::hypot
 double len(double x, double y) { return ::hypot(x, y); }
 
 // rules: STN-24
@@ -39,7 +39,7 @@ int uses_trusted(int a) { return reads_global_trusted(a); }
 
 // Antaganden följer med transitivt, sorterade.
 // rules: STN-24
-// expect: stone: assuming ext_scale, hypot, std::fabs
+// expect: stone: assuming ext_scale, std::fabs, std::hypot
 double combined(double x) { return scaled(x) + len(x, x) + abs_f(float(x)); }
 
 // rules: STN-23

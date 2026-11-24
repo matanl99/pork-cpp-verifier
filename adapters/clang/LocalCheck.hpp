@@ -44,6 +44,8 @@ std::string displayName(const clang::FunctionDecl& fd);
 // Kvalificerat namn utan templateargument, som matchas mot trust-listan:
 // "std::clamp", "std::optional::reset".
 std::string trustName(const clang::FunctionDecl& fd);
+// Det andra namnet trust-listan godtar ("sqrt" för std::sqrt), annars tomt.
+std::string trustAlias(const clang::FunctionDecl& fd);
 
 // Kvalificerat namn med templateargument, t.ex. "Box<Holder>".
 std::string recordName(const clang::CXXRecordDecl& rd);
