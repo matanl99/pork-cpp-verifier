@@ -266,7 +266,37 @@ class Builder {
       weak = true;
       return *base + "[*]";
     }
+    // std::get<I>(t) som lvalue (STN-37): fältet first/second i ett std::pair,
+    // annars ett element av t (svagt, t[*]).
+    if (const auto* call = dyn_cast<CallExpr>(e); call != nullptr && call->getNumArgs() == 1 &&
+                                                   !isa<CXXMemberCallExpr, CXXOperatorCallExpr>(call)) {
+      const FunctionDecl* callee = call->getDirectCallee();
+      if (callee == nullptr || !callee->isInStdNamespace() || callee->getIdentifier() == nullptr ||
+          callee->getName() != "get" || !callee->getReturnType()->isLValueReferenceType())
+        return std::nullopt;
+      auto base = place(call->getArg(0), weak);
+      if (!base) return std::nullopt;
+      if (const FieldDecl* f = pairField(*call)) return *base + "." + fieldId(*f);
+      weak = true;
+      return *base + "[*]";
+    }
     return std::nullopt;
+  }
+
+  // std::get<0>/<1> på ett std::pair: fältet first eller second.
+  static const FieldDecl* pairField(const CallExpr& call) {
+    const FunctionDecl* callee = call.getDirectCallee();
+    const TemplateArgumentList* args = callee->getTemplateSpecializationArgs();
+    const auto* rd = call.getArg(0)->getType().getNonReferenceType()->getAsCXXRecordDecl();
+    if (args == nullptr || args->size() == 0 || args->get(0).getKind() != TemplateArgument::Integral || rd == nullptr ||
+        rd->getName() != "pair" || !rd->isInStdNamespace())
+      return nullptr;
+    llvm::APSInt index = args->get(0).getAsIntegral();
+    const char* name = index == 0 ? "first" : index == 1 ? "second" : nullptr;
+    if (name == nullptr) return nullptr;
+    for (const FieldDecl* f : rd->fields())
+      if (f->getName() == name) return f;
+    return nullptr;
   }
 
   std::optional<std::string> place(const Expr* e) {

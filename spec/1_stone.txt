@@ -376,7 +376,10 @@ container (a const call) when only read, and a write to the container when
 written, which then shall be a path. A non-const std method counts as such
 an accessor only where summaries/std.txt says it does not write (`reads`,
 `access`), never because a const overload exists. The same holds for
-`v.begin()`/`v.end()` read as iterators (STN-74, STN-78).
+`v.begin()`/`v.end()` read as iterators (STN-74, STN-78). A free std
+function with one argument that returns `T&` into it and has `access` in
+summaries/std.txt is an accessor of that argument (`std::get<0>(p) = x`);
+for Bronze, std::get<0>/<1> on a std::pair is the field first/second.
 
 STN-38  std::vector<bool> elements
 Reading `v[i]` as bool and assigning `v[i] = b` on a `std::vector<bool>`

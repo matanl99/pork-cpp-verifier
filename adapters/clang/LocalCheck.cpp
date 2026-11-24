@@ -2128,6 +2128,14 @@ class Checker {
     } else if (const auto* oc = dyn_cast<CXXOperatorCallExpr>(e)) {
       md = dyn_cast_or_null<CXXMethodDecl>(oc->getDirectCallee());
       if (md != nullptr && oc->getNumArgs() > 0) object = oc->getArg(0);
+    } else if (const auto* fc = dyn_cast<CallExpr>(e); fc != nullptr && fc->getNumArgs() == 1) {
+      // std::get<I>(t) ([tuple.elem], [variant.get]): ett fritt std-anrop som
+      // ger T& in i sitt enda argument, med access i std.txt, som t.first.
+      const FunctionDecl* fd = fc->getDirectCallee();
+      if (fd == nullptr || isa<CXXMethodDecl>(fd) || !fd->getReturnType()->isLValueReferenceType()) return nullptr;
+      if (!fd->getASTContext().getSourceManager().isInSystemHeader(fd->getLocation())) return nullptr;
+      if (!fc->getArg(0)->isLValue() || !types_.libraryReads(*fd)) return nullptr;
+      return fc->getArg(0);
     }
     if (md == nullptr || !md->isInstance() || object == nullptr) return nullptr;
     QualType rt = md->getReturnType();
@@ -2148,6 +2156,8 @@ class Checker {
     }
     if (const auto* mc = dyn_cast<CXXMemberCallExpr>(e))
       return object + "." + mc->getMethodDecl()->getNameAsString() + "(...)";
+    if (const auto* fc = dyn_cast<CallExpr>(e); fc != nullptr && fc->getDirectCallee() != nullptr)
+      return fc->getDirectCallee()->getQualifiedNameAsString() + "(" + object + ")";
     return object;
   }
 
