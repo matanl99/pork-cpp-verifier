@@ -80,7 +80,7 @@ void stop_all(World& w) { for (Player& p : w.players) p.speed = 0.0F; }
 int count_targets(const World& w) { int n = 0; for (Player p : w.players) if (p.target) n += 1; return n; }
 
 // rules: STN-35
-// expect: not-stone: may be the same object
+// expect: not-stone: loans: changes 'w.players' while the range-for iterator borrows 'w.players[*]'
 void grow_in_loop(World& w) { for (Player& p : w.players) w.players.push_back(p); }
 
 // rules: STN-35

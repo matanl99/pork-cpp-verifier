@@ -31,8 +31,9 @@ TEST(LoanSummariesTest, NodeContainersKeepElementsOnInsert) {
   LoanSummaries s = builtin();
   EXPECT_EQ(find(s, Cat::owner, "std::map::insert", "insert", {false})->effect, LoanEffect::insert);
   EXPECT_EQ(find(s, Cat::owner, "std::list::push_back", "push_back", {false})->effect, LoanEffect::insert);
-  // Omallokering/rehash: ingen regel, standarden.
-  EXPECT_FALSE(find(s, Cat::owner, "std::vector::push_back", "push_back", {false}));
+  // Omallokering/rehash: standardeffekten (vector::push_back har bara copies).
+  EXPECT_EQ(find(s, Cat::owner, "std::vector::push_back", "push_back", {false})->effect, LoanEffect::standard);
+  EXPECT_TRUE(find(s, Cat::owner, "std::vector::push_back", "push_back", {false})->copies);
   EXPECT_FALSE(find(s, Cat::owner, "std::unordered_map::insert", "insert", {false}));
 }
 
@@ -111,13 +112,13 @@ TEST(LoanSummariesTest, Errors) {
   EXPECT_EQ(s.parse("tree size : reads\n", "f").error(), "f:1: unknown category 'tree' (owner, pointer, free)");
   EXPECT_EQ(s.parse("owner size : read\n", "f").error(), "f:1: unknown effect 'read'");
   EXPECT_EQ(s.parse("owner size : reads fast\n", "f").error(),
-            "f:1: unknown modifier 'fast' (position, range, consumes, forwards, interval(i,j) with i < j)");
+            "f:1: unknown modifier 'fast' (position, range, consumes, forwards, copies, interval(i,j) with i < j)");
   EXPECT_EQ(s.parse("free sort : default interval(1,0)\n", "f").error(),
-            "f:1: unknown modifier 'interval(1,0)' (position, range, consumes, forwards, interval(i,j) with i < j)");
+            "f:1: unknown modifier 'interval(1,0)' (position, range, consumes, forwards, copies, interval(i,j) with i < j)");
   EXPECT_EQ(s.parse("free sort : default interval(0, 1)\n", "f").error(),
-            "f:1: unknown modifier 'interval(0,' (position, range, consumes, forwards, interval(i,j) with i < j)");
+            "f:1: unknown modifier 'interval(0,' (position, range, consumes, forwards, copies, interval(i,j) with i < j)");
   EXPECT_EQ(s.parse("free sort : default interval(0,1)x\n", "f").error(),
-            "f:1: unknown modifier 'interval(0,1)x' (position, range, consumes, forwards, interval(i,j) with i < j)");
+            "f:1: unknown modifier 'interval(0,1)x' (position, range, consumes, forwards, copies, interval(i,j) with i < j)");
   EXPECT_EQ(s.parse("# c\nowner size size : reads\n", "f").error(), "f:2: 'size' is listed twice for owner");
   EXPECT_EQ(s.parse("owner erase(key) : reads\n", "f").error(),
             "f:1: unknown parameter shape in 'erase(key)' (iterator, ..., ending with '...')");

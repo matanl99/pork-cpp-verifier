@@ -1285,8 +1285,14 @@ class LoanChecker {
     };
     // Argumentets nummer (utan objektet), för `position`/`range`.
     const std::size_t firstArg = !ops.empty() && ops.front().object ? 1 : 0;
+    // copies: en const T&-parameter vars värde läses innan objektet ändras.
+    auto copiedIn = [&](std::size_t k) {
+      return rule.copies && k >= firstArg && !ops[k].param.isNull() && ops[k].param->isLValueReferenceType() &&
+             ops[k].param->getPointeeType().isConstQualified() && !operandLoanBearing(ops[k]);
+    };
     auto mayPointIntoObject = [&](std::size_t k) {
       if (k < firstArg) return false;
+      if (copiedIn(k)) return true;
       return (rule.position && k == firstArg) || (rule.range && operandLoanBearing(ops[k]));
     };
     std::vector<Reach> refs;
@@ -1447,6 +1453,11 @@ class LoanChecker {
         const Operand& oi = ops[refs[i].operand];
         const Operand& oj = ops[refs[j].operand];
         if ((oi.object && mayPointIntoObject(refs[j].operand)) || (oj.object && mayPointIntoObject(refs[i].operand)))
+          continue;
+        // Positionen och värdet som kopieras in får båda peka in i objektet
+        // (v.insert(v.begin(), v[0])).
+        if ((copiedIn(refs[i].operand) && mayPointIntoObject(refs[j].operand)) ||
+            (copiedIn(refs[j].operand) && mayPointIntoObject(refs[i].operand)))
           continue;
         for (const PlaceRef& a : refs[i].places)
           for (const PlaceRef& b : refs[j].places)

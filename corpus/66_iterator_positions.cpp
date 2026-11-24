@@ -46,10 +46,10 @@ void insert_local(std::vector<int>& v) {
   v.insert(it, 1);
 }
 
-// Ett värde som refererar in i v: standarden kräver att det fungerar, men
-// pork skiljer inte ut de std-funktioner som klarar alias (som push_back(v[0])).
+// Ett värde som refererar in i v: standarden kräver att det fungerar
+// (std.txt `copies`, 112_copy_own_element.cpp).
 // rules: STN-74, STN-62
-// expect: not-stone: may be the same object
+// expect: stone: assuming
 void duplicate_first(std::vector<int>& v) {
   if (!v.empty()) v.insert(v.end(), v[0]);
 }
@@ -220,6 +220,7 @@ void sort_all(std::vector<int>& v) { std::sort(v.begin(), v.end()); }
 #include <pork/run.hpp>
 using Vec = std::vector<int>;
 PORK_RUN_CASES(
+    {"duplicate_first", [] { Vec v{1}; for (int i = 0; i < 20; ++i) duplicate_first(v); return v.back() == 1 ? 0 : 1; }},
     // Positioner i fel behållare (_GLIBCXX_DEBUG).
     {"insert_other", [] { Vec v{1}, w{2}; insert_other(v, w); return 0; }},
     {"erase_other", [] { Vec v{1}, w{2}; erase_other(v, w); return 0; }},
