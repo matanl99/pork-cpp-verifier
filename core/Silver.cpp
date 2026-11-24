@@ -130,6 +130,7 @@ void silver(const FactsMap& facts, std::map<std::string, Verdict>& verdicts, IPr
     // Implementationer bakom dispatchande anrop: kontraktet gäller bara om de
     // är bevisade (sin kod och kontraktet). Par (implementation, metod).
     std::vector<std::pair<const FunctionFacts*, std::string>> implementations;
+    const FunctionFacts* root;  // funktionen som bevisas
   };
   std::vector<Job> work;
   std::vector<std::string> programs;
@@ -252,7 +253,7 @@ void silver(const FactsMap& facts, std::map<std::string, Verdict>& verdicts, IPr
     }
     program += parts.front()->entry;
     work.push_back({&v, std::move(parts), std::move(contracts), std::move(relies), programs.size(), selfTest,
-                    std::move(lsp), std::move(impls)});
+                    std::move(lsp), std::move(impls), &f});
     programs.push_back(std::move(program));
   }
 
@@ -306,6 +307,42 @@ void silver(const FactsMap& facts, std::map<std::string, Verdict>& verdicts, IPr
     v.kind = Verdict::Kind::stone;
     v.reason.clear();
     v.runtimeProved = true;
+  }
+
+  // SLV-18: ett kontrakt får inte bevisas med sig självt. Leder det en funktion
+  // bygger på (eftervillkor, implementationer bakom dispatch) tillbaka till den,
+  // visar beviset bara att rekursionen är konsekvent, inte att den tar slut
+  // (f och g med PORK_POST som anropar varandra).
+  std::map<std::string, const Job*> jobOf;
+  for (const Job& job : work) jobOf.emplace(job.root->usr, &job);
+  auto reliesOn = [](const Job& job) {
+    std::vector<const FunctionFacts*> out = job.relies;
+    for (const auto& [g, method] : job.implementations) out.push_back(g);
+    return out;
+  };
+  auto leadsTo = [&](const FunctionFacts* from, const std::string& target) {
+    std::set<std::string> seen;
+    std::vector<const FunctionFacts*> stack{from};
+    while (!stack.empty()) {
+      const FunctionFacts* g = stack.back();
+      stack.pop_back();
+      if (g->usr == target) return true;
+      if (!seen.insert(g->usr).second) continue;
+      if (auto it = jobOf.find(g->usr); it != jobOf.end())
+        for (const FunctionFacts* h : reliesOn(*it->second)) stack.push_back(h);
+    }
+    return false;
+  };
+  for (const Job& job : work) {
+    Verdict& v = *job.verdict;
+    if (v.kind != Verdict::Kind::silver) continue;
+    for (const FunctionFacts* g : reliesOn(job)) {
+      if (!leadsTo(g, job.root->usr)) continue;
+      v.kind = Verdict::Kind::stone;
+      v.reason = "relies on the contract of '" + g->name + "', which leads back to '" + job.root->name +
+                 "': recursion through contracts is not proved to terminate";
+      break;
+    }
   }
 
   // Ett bevis som bygger på ett eftervillkor gäller bara om det eftervillkoret

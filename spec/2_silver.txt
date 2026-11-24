@@ -68,7 +68,10 @@ call.
 SLV-18  Postconditions
 PORK_POST shall be proved at every return. A caller shall use the
 postcondition instead of the body, and shall only be Silver if every
-postcondition it relies on is proved.
+postcondition it relies on is proved. A function whose contracts lead back to
+itself (`f` and `g` with PORK_POST that call each other, also through the
+implementations behind a dispatching call) shall not be Silver: the proofs
+show that the recursion is consistent, not that it ends.
 
 SLV-19  Type invariants
 A PORK_INVARIANT shall be assumed and checked like a precondition and a
