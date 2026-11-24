@@ -1059,7 +1059,15 @@ class LoanChecker {
       // Resultatet lånar ägd lagring i det operanden betecknar eller pekar på
       // (get_if(&v) pekar in i varianten, *it in i behållaren).
       bool nested = !operandLoanBearing(o);
+      // En skalär har ingen ägd lagring: resultatet kan bara vara den själv
+      // (std::max(a, b) ger a eller b), som en referens bunden till a.
+      bool scalar = byReference(o) && !operandLoanBearing(o) && o.e->getType()->isScalarType();
       for (PlaceRef& r : got) {
+        if (scalar) {
+          r.exclusive = r.exclusive && !constResult;
+          out.push_back(r);
+          continue;
+        }
         Place o = opened(r.place, nested);
         if (o != r.place) r.loan = -1;
         r.place = std::move(o);

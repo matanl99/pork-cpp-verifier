@@ -3119,8 +3119,19 @@ class Checker {
               hit = true;
               otherConst = otherConst && g.isConst;
             }
-          if (hit && !(h.isConst && otherConst))
+          if (hit && !(h.isConst && otherConst)) {
+            // s.m(s.own): själva vägarna överlappar, det är det verkliga aliaset.
+            std::optional<Path> pi = pathOfUse(uses[i]);
+            std::optional<Path> pj = pathOfUse(uses[j]);
+            auto direct = [](const std::optional<Path>& p) {
+              return p && std::ranges::none_of(p->fields, [](const FieldDecl* f) { return f->getType()->isReferenceType(); });
+            };
+            if (direct(pi) && direct(pj) && pi->overlaps(*pj) &&
+                (uses[i].mode == Mode::mutRef || uses[j].mode == Mode::mutRef))
+              return "operands '" + pi->text + "' and '" + pj->text + "' of the call to " + callee +
+                     " may be the same object and one is changed";
             return "argument '" + text(uses[j]) + "' may refer to the same object as " + ref;
+          }
         }
       }
     }
