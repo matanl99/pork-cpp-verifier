@@ -2182,8 +2182,28 @@ class Checker {
     }
   }
 
+  // Ett värde utan adresser: inga referenser eller pekare, inte heller i fält,
+  // baser eller element. En konstant som håller en adress ändras aldrig själv,
+  // men det den pekar på kan vara en föränderlig global (STN-22).
+  static bool holdsNoAddress(QualType t) {
+    t = t.getCanonicalType();
+    if (t->isReferenceType() || t->isAnyPointerType() || t->isMemberPointerType()) return false;
+    if (const auto* at = dyn_cast<ArrayType>(t.getTypePtr())) return holdsNoAddress(at->getElementType());
+    const auto* rd = t->getAsCXXRecordDecl();
+    if (rd == nullptr) return true;
+    if (!rd->hasDefinition()) return false;
+    rd = rd->getDefinition();
+    for (const CXXBaseSpecifier& b : rd->bases())
+      if (!holdsNoAddress(b.getType())) return false;
+    for (const FieldDecl* f : rd->fields())
+      if (!holdsNoAddress(f->getType())) return false;
+    return true;
+  }
+
   static Reason staticVariable(const VarDecl& vd) {
     if (vd.hasLocalStorage()) return std::nullopt;
+    if (!holdsNoAddress(vd.getType()))
+      return "uses variable '" + vd.getQualifiedNameAsString() + "' with static storage";
     if (vd.isConstexpr()) return std::nullopt;  // kompileringstidskonstant
     // `static const size_type npos = -1;` (std::string::npos): const och
     // konstant initierad, alltså en kompileringstidskonstant.

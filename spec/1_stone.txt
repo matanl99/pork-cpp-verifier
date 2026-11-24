@@ -260,8 +260,11 @@ STN-22  Names
 Names shall refer to parameters, locals, enum constants, constexpr
 variables (including static constexpr members), const variables with a
 constant initializer (`static const size_type npos = -1;`) or const arrays
-with constant initialization (STN-75). The analysis
-shall reject references to other global or static variables.
+with constant initialization (STN-75). A variable with static storage is a
+constant only if its value holds no address: it is not a reference or a
+pointer and has none in its fields, bases or elements (`constexpr int& r =
+counter;` reaches a mutable global). The analysis shall reject references to
+other global or static variables.
 
 == Calls ==
 
