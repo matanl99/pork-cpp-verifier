@@ -15,8 +15,9 @@ struct Named { std::string name; int id; };
 // expect: silver: assuming
 unsigned long length_of(const std::string& s) { return s.size() + s.length(); }
 
+// En tom const sträng: s[0] är s[s.size()], alltså '\0' (definierat).
 // rules: SLV-35, SLV-13
-// expect: stone: not silver: precondition of 'std::string::operator[]': index < size()
+// expect: silver: assuming
 char first(const std::string& s) { return s[0]; }
 
 // rules: SLV-35, SLV-13

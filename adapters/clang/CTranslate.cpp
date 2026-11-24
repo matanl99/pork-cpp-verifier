@@ -1027,6 +1027,17 @@ class Translator {
       if (member == "operator=") return "(" + o + " = " + x + ")";
       return stringAppend(spec, o, x);
     }
+    // s[s.size()] på en const sträng är definierat och ger '\0' ([string.access]).
+    // Bara const-överlagringen: den ger const char&, så ingen skrivning når dit.
+    if (member == "operator[]" && nargs == 1 && md.isConst() && isPath(object)) {
+      TRY(o, expr(object));
+      TRY(i, expr(c.getArg(first)));
+      if (std::string key = "pork_nul"; std::ranges::none_of(out_.decls, [&](const auto& d) { return d.first == key; }))
+        out_.decls.emplace_back(key, "static const char pork_nul = 0;\n");
+      return "(*({ unsigned long pork_si = (" + i + "); __CPROVER_assert(pork_si <= " + o + ".size, " +
+             quoted("precondition of 'std::string::operator[]': index <= size()") + "); pork_si < " + o +
+             ".size ? (const char*)&" + o + ".data[pork_si] : &pork_nul; }))";
+    }
     return vectorCall(c, md, object, first, spec);
   }
 
