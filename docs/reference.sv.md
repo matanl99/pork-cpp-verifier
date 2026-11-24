@@ -608,7 +608,8 @@ och samma C-modell, med samma kontrakt och gränser, kan då skickas till både 
   `--vector-bound`). Det följer av storleksgränsen, men cbmc ser då att loopen slutar efter N
   varv i stället för att rulla ut den till `--unwind`. Det gjorde rugbys loopar över spelarna
   ungefär 4 gånger billigare.
-- **Indata:** godtyckliga, men flyttal antas ändliga och enums antas ha ett uppräknat värde.
+- **Indata:** godtyckliga, men flyttal antas ändliga och en enum utan fast typ antas ligga inom sitt intervall
+  (en enum med fast typ kan ha vilket värde som helst av den typen).
   De kommer från funktioner utan kropp (se [Indata i testramen](#indata-i-testramen)).
   `PORK_PRE` antas i funktionen som prövas och kontrolleras (assert) när den anropas.
 - **Anrop:** allt som anropas tas med (transitivt), så ett fel i en anropad funktion är ett

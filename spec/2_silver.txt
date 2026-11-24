@@ -47,7 +47,8 @@ SLV-8  Shifts out of range (negative or too large distance, overflowing
        result)
 SLV-9  Floating-point overflow to +-inf
 SLV-10  NaN results
-SLV-11  Float to integer conversion of a value that does not fit
+SLV-11  Float to integer conversion of a value that does not fit, and an integer
+        conversion to an enum without a fixed type outside its range of values
 SLV-12  Dereference of a null pointer (get_if, STN-39; nullable return,
         STN-11)
 SLV-13  std::vector access out of range (operator[], at, front, back on an
@@ -99,8 +100,10 @@ Any other assert shall be proved to hold, like SPARK's pragma Assert:
 == Inputs and models ==
 
 SLV-22  Inputs
-Inputs shall be arbitrary, except: floats are finite, enums have an
-enumerated value, and a std::vector has at most --vector-bound elements
+Inputs shall be arbitrary, except: floats are finite, an enum without a
+fixed underlying type is within its range of values ([dcl.enum]/8; an enum
+with a fixed type can hold any value of that type, also one that is not an
+enumerator), and a std::vector has at most --vector-bound elements
 (reported as the assumption `std::vector size <= N`).
 
 SLV-23  std::optional model  [allows]

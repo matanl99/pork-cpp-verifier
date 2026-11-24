@@ -1494,7 +1494,7 @@ class Translator {
     return t.getCanonicalType()->getAsCXXRecordDecl() != nullptr ? "(" + ct + "){0}" : "((" + ct + ")0)";
   }
 
-  // Antaganden om godtyckliga indata: flyttal ändliga, enums uppräknade.
+  // Antaganden om godtyckliga indata: flyttal ändliga, enums inom sitt intervall.
   std::string assumeValid(QualType t, const std::string& path) {
     t = t.getCanonicalType();
     if (const auto* bt = t->getAs<BuiltinType>()) {
@@ -1507,14 +1507,16 @@ class Translator {
              ") && !__CPROVER_isinf" + sfx + "(" + path + "));\n";
     }
     const TagDecl* tag = t->getAsTagDecl();
+    // En enum kan ha andra värden än de uppräknade (`static_cast<E>(7)`), också
+    // från Silver-funktioner: med fast typ alla värden av den underliggande
+    // typen, annars intervallet ([dcl.enum]/8).
     if (const auto* ed = dyn_cast_or_null<EnumDecl>(tag)) {
-      std::string any;
-      for (const EnumConstantDecl* c : ed->enumerators()) {
-        auto lit = intLiteral(c->getInitVal(), ed->getIntegerType());
-        if (!lit) return "";
-        any += (any.empty() ? "" : " || ") + path + " == " + *lit;
-      }
-      return any.empty() ? "" : "  __CPROVER_assume(" + any + ");\n";
+      const EnumDecl* def = ed->getDefinition();
+      if (def == nullptr || def->isFixed()) return "";
+      auto range = enumRange(*def);
+      if (!range) return "";
+      return "  __CPROVER_assume((long long)" + path + " >= " + std::to_string(range->first) + "LL && (long long)" +
+             path + " < " + std::to_string(range->second) + "LL);\n";
     }
     if (const auto* spec = optionalSpec(dyn_cast_or_null<CXXRecordDecl>(tag)))
       return assumeValid(optionalValue(*spec), path + ".v");
@@ -1707,6 +1709,10 @@ class Translator {
       case CK_UserDefinedConversion:  // anropet (konstruktor/konverteringsfunktion) ligger under
         return expr(sub);
       case CK_IntegralCast:
+        if (const auto* ed = unfixedEnum(c.getType()); ed != nullptr && !constantInEnum(*sub, *ed)) {
+          TRY(x, expr(sub));
+          return intToEnum(sub->getType(), c.getType(), *ed, x);
+        }
         if (options_.strict && !fits(sub->getType(), c.getType()) && !constantFits(*sub, c.getType())) {
           TRY(x, expr(sub));
           return intToInt(sub->getType(), c.getType(), x);
@@ -1748,6 +1754,45 @@ class Translator {
     bool targetSigned = to->isSignedIntegerOrEnumerationType();
     llvm::APSInt lo = llvm::APSInt::getMinValue(bits, !targetSigned), hi = llvm::APSInt::getMaxValue(bits, !targetSigned);
     return llvm::APSInt::compareValues(*v, lo) >= 0 && llvm::APSInt::compareValues(*v, hi) <= 0;
+  }
+
+  // En enum utan fast underliggande typ: bara värdena i dess intervall finns
+  // (det minsta bitfältet som rymmer alla uppräknade värden). Att konvertera
+  // ett annat värde till den är odefinierat ([expr.static.cast]).
+  static const EnumDecl* unfixedEnum(QualType t) {
+    const auto* et = t.getCanonicalType()->getAs<EnumType>();
+    const EnumDecl* ed = et != nullptr ? et->getDecl()->getDefinition() : nullptr;
+    return ed != nullptr && !ed->isFixed() ? ed : nullptr;
+  }
+
+  // Intervallet [lo, hi) för en enum utan fast typ ([dcl.enum]/8), som clangs
+  // EnumDecl::getValueRange men i long long. nullopt om gränserna inte ryms.
+  static std::optional<std::pair<long long, long long>> enumRange(const EnumDecl& ed) {
+    unsigned neg = ed.getNumNegativeBits(), pos = ed.getNumPositiveBits();
+    unsigned exp = neg != 0 ? std::max(neg, pos + 1) - 1 : pos;
+    if (exp > 62) return std::nullopt;
+    long long hi = 1LL << exp;
+    return std::pair{neg != 0 ? -hi : 0LL, hi};
+  }
+
+  bool constantInEnum(const Expr& e, const EnumDecl& ed) const {
+    std::optional<llvm::APSInt> v = e.getIntegerConstantExpr(ctx_);
+    auto range = enumRange(ed);
+    if (!v || !range) return false;
+    if (v->isSigned() ? v->getSignificantBits() > 64 : v->getActiveBits() > 63) return false;
+    return v->getExtValue() >= range->first && v->getExtValue() < range->second;
+  }
+
+  Text intToEnum(QualType from, QualType to, const EnumDecl& ed, const std::string& x) {
+    TRY(f, cType(from));
+    TRY(t, cType(to));
+    auto range = enumRange(ed);
+    if (!range) return fail("conversion to an enum whose values do not fit in long long");
+    std::string cond = "(long long)pork_cv >= " + std::to_string(range->first) + "LL && (long long)pork_cv < " +
+                       std::to_string(range->second) + "LL";
+    if (!from->isSignedIntegerOrEnumerationType())  // stora unsigned-värden blir negativa i long long
+      cond = "(unsigned long long)pork_cv < 9223372036854775808ULL && " + cond;
+    return checkedConversion(f, t, x, cond, "conversion to enum out of range");
   }
 
   // Ryms alla värden av heltalstypen `from` i `to`?
