@@ -61,6 +61,49 @@ char change_before(const std::string& a, std::string& b) {
   return use(c);
 }
 
+struct Outer {
+  Cursor c;
+  int n;
+};
+
+// rules: STN-62
+// expect: stone: assuming type std::span
+void Cursor_reset(Cursor& c, std::span<const char> t) {
+  c.text = t;
+  c.pos = 0;
+}
+
+// Hela objektet via Cursor::operator=, från en temporär och från en lokal.
+// rules: STN-62
+// expect: not-stone: loans: may store a loan of 't[*]', which does not outlive the function (line 81)
+void bad_assign_whole(Cursor& out) {
+  std::string t = "abcdefghijklmnopqrstuvwxyz0123456789";
+  out = Cursor{t, 0};
+}
+
+// rules: STN-62
+// expect: not-stone: loans: may store a loan of 't[*]', which does not outlive the function (line 89)
+void bad_assign_local(Cursor& out) {
+  std::string t = "abcdefghijklmnopqrstuvwxyz0123456789";
+  Cursor l{t, 0};
+  out = l;
+}
+
+// Genom en funktion som lagrar, i ett fält av ett annat objekt.
+// rules: STN-62
+// expect: not-stone: loans: may store a loan of 't[*]', which does not outlive the function (line 97)
+void bad_reset_field(Outer& o) {
+  std::string t = "abcdefghijklmnopqrstuvwxyz0123456789";
+  Cursor_reset(o.c, t);
+}
+
+// För försiktigt: Cursor_reset lagrar ett lån, så dess sammanfattning är okänd,
+// och anroparen antar att den kan skriva genom lånen i out (som kan vara s).
+// En sammanfattning "lagrar ett lån av argument j i argument k" skulle godta det.
+// rules: STN-62
+// expect: not-stone: loans: operands
+void reset_from_param(Cursor& out, const std::string& s) { Cursor_reset(out, s); }
+
 #ifdef PORK_RUN
 #include <pork/run.hpp>
 PORK_RUN_CASES(
@@ -70,5 +113,8 @@ PORK_RUN_CASES(
        std::string a = "q", b = "a long string that does not fit in the small buffer";
        return bad_change_after(a, b) == 'a' ? 0 : 1;
      }},
+    {"bad_assign_whole", [] { Cursor c{}; bad_assign_whole(c); return use(c) == 'a' ? 0 : 1; }},
+    {"bad_assign_local", [] { Cursor c{}; bad_assign_local(c); return use(c) == 'a' ? 0 : 1; }},
+    {"bad_reset_field", [] { Outer o{}; bad_reset_field(o); return use(o.c) == 'a' ? 0 : 1; }},
     {"change_before", [] { std::string a = "q", b = "r"; return change_before(a, b) == 'r' ? 0 : 1; }})
 #endif
