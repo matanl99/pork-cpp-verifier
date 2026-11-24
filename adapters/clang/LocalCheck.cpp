@@ -2,6 +2,7 @@
 
 #include "Assert.hpp"
 #include "Dispatch.hpp"
+#include "HintAttributes.hpp"
 #include "EnumSwitch.hpp"
 #include "LoanCheck.hpp"
 #include "Move.hpp"
@@ -1080,7 +1081,7 @@ class Checker {
     return std::nullopt;
   }
 
-  Reason stmt(const Stmt* s) { return stmtImpl(s); }
+  Reason stmt(const Stmt* s) { return stmtImpl(withoutHints(s)); }
 
  private:
   Reason stmtImpl(const Stmt* s) {

@@ -200,7 +200,9 @@ STN-13  Statements
 The allowed statements shall be: block, return, if (with init statement and
 condition variable), for, range-for, while, do, switch/case/default, break,
 continue, declarations, expression statements and `throw` of a <stdexcept>
-type (STN-83). The analysis shall reject all others (goto, try/catch, rethrow,
+type (STN-83). The attributes [[likely]], [[unlikely]] and
+[[fallthrough]] shall be allowed on statements: they do not change what the
+program does. The analysis shall reject all others (goto, try/catch, rethrow,
 asm, labels, coroutines, ...).
 A switch without default may take no case, also when it has a case for every
 enumerator of an enum (the enum can hold other values, `static_cast<E>(7)`);

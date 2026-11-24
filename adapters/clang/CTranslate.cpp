@@ -2,6 +2,7 @@
 
 #include "Assert.hpp"
 #include "Dispatch.hpp"
+#include "HintAttributes.hpp"
 #include "Move.hpp"
 #include "LocalCheck.hpp"
 #include "Span.hpp"
@@ -2288,6 +2289,7 @@ class Translator {
   }
 
   Text stmt(const Stmt* s) {
+    s = withoutHints(s);
     if (s == nullptr) return std::string();
     std::string at = lineOf(s->getBeginLoc());
     if (auto a = assertMacro(s, sm_, ctx_.getLangOpts())) {  // som SPARK:s pragma Assert

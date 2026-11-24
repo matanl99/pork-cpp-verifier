@@ -26,6 +26,7 @@
 #include "LoanCheck.hpp"
 
 #include "EnumSwitch.hpp"
+#include "HintAttributes.hpp"
 #include "LocalCheck.hpp"
 
 #include <clang/AST/ASTContext.h>
@@ -1647,7 +1648,8 @@ class LoanChecker {
                ExprWithCleanups, CXXDefaultArgExpr, CXXDefaultInitExpr, InitListExpr, ImplicitValueInitExpr,
                CXXScalarValueInitExpr, LambdaExpr, CXXStdInitializerListExpr, UnaryExprOrTypeTraitExpr,
                CXXNoexceptExpr, TypeTraitExpr, ConstantExpr, SubstNonTypeTemplateParmExpr, ArrayInitLoopExpr,
-               ArrayInitIndexExpr, CXXRewrittenBinaryOperator, CXXParenListInitExpr, NullStmt>(st);
+               ArrayInitIndexExpr, CXXRewrittenBinaryOperator, CXXParenListInitExpr, NullStmt>(st) ||
+           (isa<AttributedStmt>(st) && isHintOnly(*llvm::cast<AttributedStmt>(st)));
   }
 
   // Ett lån lagras i något annat än en lokal variabel (ett fält, ett element):
