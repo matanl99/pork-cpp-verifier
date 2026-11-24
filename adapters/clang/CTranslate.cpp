@@ -1695,6 +1695,8 @@ class Translator {
         return fail("assignment to a pointer");
       TRY(l, expr(b->getLHS()));
       TRY(r, expr(b->getRHS()));
+      if (const auto* ca = dyn_cast<CompoundAssignOperator>(b))
+        if (auto narrowed = narrowCompound(*ca, l, r)) return *narrowed;
       return "(" + l + " " + b->getOpcodeStr().str() + " " + r + ")";
     }
     if (const auto* c = dyn_cast<ConditionalOperator>(e)) {
@@ -1953,6 +1955,11 @@ class Translator {
     if (u.getOpcode() == UO_Deref && isThis(u.getSubExpr())) return selfValue();
     if (u.getOpcode() == UO_Deref && isa<CXXThisExpr>(strip(u.getSubExpr()))) return selfValue();
     TRY(x, expr(u.getSubExpr()));
+    if (u.isIncrementDecrementOp()) {
+      QualType t = u.getSubExpr()->getType();
+      if (t->isIntegerType() && !t->isBooleanType() && ctx_.getIntWidth(t) < ctx_.getIntWidth(ctx_.IntTy))
+        return narrowIncrement(u, t, x);
+    }
     switch (u.getOpcode()) {
       case UO_Plus: return "(+" + x + ")";
       case UO_Minus: return "(-" + x + ")";
@@ -1970,6 +1977,43 @@ class Translator {
       }
       default: return fail(std::string("operator ") + UnaryOperator::getOpcodeStr(u.getOpcode()).str());
     }
+  }
+
+  // ++/-- på en typ smalare än int: C++ räknar i int och konverterar tillbaka
+  // ([expr.pre.incr]: ++x är x += 1), så additionen kan inte svämma över och
+  // konverteringen är definierad (modulo, C++20). Med --silver-strict kontrolleras
+  // konverteringen (SLV-30). C:s ++ på char räknas av bevisaren i char.
+  Text narrowIncrement(const UnaryOperator& u, QualType t, const std::string& x) {
+    TRY(ct, cType(t));
+    std::string step = std::string("(int)pork_old ") + (u.isIncrementOp() ? "+" : "-") + " 1";
+    std::string back = "(" + ct + ")(" + step + ")";
+    if (options_.strict && !fits(ctx_.IntTy, t)) {
+      TRY(checked, intToInt(ctx_.IntTy, t, "(" + step + ")"));
+      back = checked;
+    }
+    return "({ " + ct + "* pork_p = &(" + x + "); " + ct + " pork_old = *pork_p; *pork_p = " + back + "; " +
+           (u.isPrefix() ? "*pork_p" : "pork_old") + "; })";
+  }
+
+  // x op= y räknas i beräkningstypen och konverteras sedan tillbaka till x:s typ
+  // ([expr.ass]). Konverteringen syns inte som en cast i AST:n: ett smalare
+  // flyttal kontrolleras alltid (SLV-9), ett heltal som kan tappa värdet med
+  // --silver-strict (SLV-30). nullopt: ingen kontroll behövs.
+  std::optional<Text> narrowCompound(const CompoundAssignOperator& ca, const std::string& l, const std::string& r) {
+    QualType t = ca.getLHS()->getType(), comp = ca.getComputationResultType();
+    bool floating = t->isRealFloatingType() && comp->isRealFloatingType() && ctx_.getFloatingTypeOrder(t, comp) < 0;
+    bool integer = options_.strict && t->isIntegerType() && !t->isBooleanType() && comp->isIntegerType() &&
+                   !fits(comp, t);
+    if (!floating && !integer) return std::nullopt;
+    auto ct = cType(t);
+    auto cc = cType(comp);
+    if (!ct) return Text(std::unexpected(ct.error()));
+    if (!cc) return Text(std::unexpected(cc.error()));
+    std::string op = BinaryOperator::getOpcodeStr(BinaryOperator::getOpForCompoundAssignment(ca.getOpcode())).str();
+    std::string value = "((" + *cc + ")*pork_p " + op + " (" + r + "))";
+    Text back = floating ? narrowFloat(comp, t, value) : intToInt(comp, t, value);
+    if (!back) return back;
+    return Text("({ " + *ct + "* pork_p = &(" + l + "); *pork_p = " + *back + "; *pork_p; })");
   }
 
   // &(väg) för ett T&-argument.

@@ -147,7 +147,10 @@ be a finding.
 SLV-30  Lossy integer conversions
 Where --silver-strict is given, an integer conversion (implicit or explicit)
 whose value may not fit the target type shall be a finding:
-`integer conversion out of range`.
+`integer conversion out of range`. This includes the conversion back after ++,
+-- and x op= y on a type narrower than its computation type (`char c; c++`
+is computed in int); without --silver-strict that conversion is defined
+and no finding.
 
 == Provers ==
 
