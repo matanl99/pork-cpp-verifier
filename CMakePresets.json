@@ -12,10 +12,21 @@
         "CMAKE_EXPORT_COMPILE_COMMANDS": true,
         "ENABLE_SANITIZERS": true
       }
+    },
+    {
+      "name": "release",
+      "displayName": "Release (measurements)",
+      "generator": "Ninja",
+      "binaryDir": "build/release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": true
+      }
     }
   ],
   "buildPresets": [
-    { "name": "debug-asan", "configurePreset": "debug-asan" }
+    { "name": "debug-asan", "configurePreset": "debug-asan" },
+    { "name": "release", "configurePreset": "release" }
   ],
   "testPresets": [
     {
@@ -24,6 +35,12 @@
       "output": { "outputOnFailure": true },
       "execution": { "jobs": 4 },
       "environment": { "ASAN_OPTIONS": "allow_user_poisoning=0" }
+    },
+    {
+      "name": "release-tests",
+      "configurePreset": "release",
+      "output": { "outputOnFailure": true },
+      "execution": { "jobs": 4 }
     }
   ]
 }
