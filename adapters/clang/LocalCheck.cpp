@@ -2535,6 +2535,7 @@ class Checker {
     if (root == nullptr || (root->getType()->isReferenceType() && !moveSource) || !root->hasLocalStorage())
       return std::string("std::move of something other than a local variable or value parameter");
     noteWrite(*p);
+    if (auto r = sameExpression(call, *p, moveSource)) return r;
     if (moveSource) {
       if (auto r = movedFromSource(call, arg, *p, *parm)) return r;
       return expr(arg);
@@ -2548,6 +2549,66 @@ class Checker {
       if (path.root == root && it->second.contains(var))
         return "'" + var->getNameAsString() + "' is used after std::move(" + p->text + ")";
     return expr(arg);
+  }
+
+  // STN-57/72: ordningen mellan operander och argument är ospecificerad, så
+  // varken källordningen (movedFromSource) eller CFG:n (liveAfter_) säger om
+  // en annan förekomst i samma fullständiga uttryck körs före flytten
+  // (`add(*p, take(std::move(p)))`, g++ räknar från höger). Där får roten inte
+  // förekomma alls, direkt eller genom en lokal referens; för en flyttkälla
+  // (STN-72) ingen väg som överlappar den flyttade.
+  Reason sameExpression(const Expr* call, const Path& moved, bool source) {
+    auto& ctx = const_cast<ASTContext&>(types_.context());
+    const Stmt* top = call;
+    for (;;) {
+      auto parents = ctx.getParents(*top);
+      const Expr* up = parents.size() == 1 ? parents[0].get<Expr>() : nullptr;
+      if (up == nullptr) break;
+      top = up;
+    }
+    std::optional<std::string> found;
+    std::function<void(const Stmt*)> walk = [&](const Stmt* s) {
+      if (s == nullptr || s == call || found) return;
+      if (const auto* dr = dyn_cast<DeclRefExpr>(s)) {
+        if (dr->getDecl() == moved.root) {
+          if (!source) {
+            found = dr->getDecl()->getNameAsString();
+            return;
+          }
+          std::optional<Path> p = pathOf(largestPath(dr));
+          if (!p || p->overlaps(moved)) found = p ? p->text : dr->getDecl()->getNameAsString();
+          return;
+        }
+        if (const auto* vd = dyn_cast<VarDecl>(dr->getDecl()))
+          if (auto it = refs_.find(vd); it != refs_.end() && it->second.root == moved.root) {
+            found = vd->getNameAsString();
+            return;
+          }
+      }
+      for (const Stmt* c : s->children()) walk(c);
+    };
+    walk(top);
+    if (found) return "'" + *found + "' is used in the same expression as std::move(" + moved.text + ")";
+    return std::nullopt;
+  }
+
+  // Den största vägen från en DeclRefExpr: o.f.g, inte bara o.
+  const Expr* largestPath(const DeclRefExpr* dr) const {
+    auto& ctx = const_cast<ASTContext&>(types_.context());
+    const Expr* top = dr;
+    for (;;) {
+      auto parents = ctx.getParents(*top);
+      const Expr* up = parents.size() == 1 ? parents[0].get<Expr>() : nullptr;
+      const auto* me = dyn_cast_or_null<MemberExpr>(up);
+      const auto* cast = dyn_cast_or_null<ImplicitCastExpr>(up);
+      if (isa_and_nonnull<ParenExpr>(up) || (cast != nullptr && cast->getCastKind() == CK_NoOp)) {
+        top = up;
+        continue;
+      }
+      if (me == nullptr || !isa<FieldDecl>(me->getMemberDecl())) break;
+      top = up;
+    }
+    return top;
   }
 
   // STN-72: std::move(o.f) ur källan o i T(T&& o) / operator=(T&& o). Fält
@@ -2575,20 +2636,7 @@ class Checker {
     std::function<void(const Stmt*, int, unsigned)> collect = [&](const Stmt* s, int part, unsigned init) {
       if (s == nullptr) return;
       if (const auto* dr = dyn_cast<DeclRefExpr>(s); dr != nullptr && dr->getDecl() == &source) {
-        // Den största vägen: o.f.g, inte bara o.
-        const Expr* top = dr;
-        for (;;) {
-          auto parents = ctx.getParents(*top);
-          const Expr* up = parents.size() == 1 ? parents[0].get<Expr>() : nullptr;
-          const auto* me = dyn_cast_or_null<MemberExpr>(up);
-          const auto* cast = dyn_cast_or_null<ImplicitCastExpr>(up);
-          if (isa_and_nonnull<ParenExpr>(up) || (cast != nullptr && cast->getCastKind() == CK_NoOp)) {
-            top = up;
-            continue;
-          }
-          if (me == nullptr || !isa<FieldDecl>(me->getMemberDecl())) break;
-          top = up;
-        }
+        const Expr* top = largestPath(dr);
         unsigned offset = sm.getFileOffset(sm.getExpansionLoc(dr->getBeginLoc()));
         uses.push_back({Key{part, init, offset}, pathOf(top), dr});
       }

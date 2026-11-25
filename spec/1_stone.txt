@@ -148,7 +148,10 @@ moves (STN-67, also through inherited constructors). The `T&&` source of
 overlaps the moved path (the source itself, the path or a path into it)
 shall occur after the move in evaluation order: the initialisers in the
 order they run (declaration order), then the body. A move from it inside a
-loop shall be rejected. Silver: SLV-40.
+loop shall be rejected, and so shall an overlapping path anywhere else in the
+same full-expression as the move (the order inside it is unspecified, see
+STN-57); a path that does not overlap may occur there (`n = o.n +
+count(std::move(o.a))`). Silver: SLV-40.
 
 STN-73  Returning *this
 A non-const member function of C returning `C&` (operator=, operator+=)
@@ -538,11 +541,17 @@ STN-57  std::move
 variable or value parameter (not a reference; for the source of a move
 constructor or assignment see STN-72) whose root is not used after
 the call (clang's LiveVariables over the function; a later assignment counts
-as a use) and does not occur in another argument of the same call: after a
-move, the value is valid but unspecified. As an argument it is a temporary
-(no aliasing check). Otherwise `'x' is used after std::move(x)`, `'x' is used
-in the same call as std::move(x)` or `std::move of something other than a
-local variable or value parameter`. Silver: a copy of x. In the loan model a
+as a use) and does not occur anywhere else in the same full-expression,
+directly or through a local reference: after a move, the value is valid but
+unspecified, and the order of operands and arguments is unspecified, so
+neither source order nor the CFG tells whether another occurrence runs before
+the move (`add(*p, id(take(std::move(p))))` dereferences an empty pointer
+when the arguments of add are evaluated right to left). As an argument it
+is a temporary (no aliasing check). Otherwise `'x' is used after
+std::move(x)`, `'x' is used in the same call as std::move(x)` (another
+argument of the call itself), `'x' is used in the same expression as
+std::move(x)` or `std::move of something other than a local variable or
+value parameter`. Silver: a copy of x. In the loan model a
 move into a call consumes the place, whatever summaries/std.txt says about the
 call's other effects (P-d): an argument for a non-const `T&&` parameter, or
 the object of a non-const `&&`-qualified method (`o.value_or(std::move(v))`,
