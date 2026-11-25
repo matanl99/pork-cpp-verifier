@@ -391,6 +391,9 @@ std::map<const Stmt*, std::set<const VarDecl*>> liveAfter(AnalysisDeclContext& a
 // under sig, och platser som säkert inte är tomma (kontrollerade eller
 // tilldelade). `outsideEmpty`: det som nås genom referensfält kan vara tomt.
 struct State : std::map<const VarDecl*, std::set<int>> {
+  // Lån som lagrats utanför funktionen (i en parameter, *this): de lever
+  // efter funktionen, så de räknas som använda till slutet. Lån -> målet.
+  std::map<int, Place> heldOutside;
   std::set<Place> empty;
   std::set<Place> full;
   bool outsideEmpty = false;
@@ -422,6 +425,7 @@ class LoanChecker {
             for (const auto& [v, ids] : e) s[v].insert(ids.begin(), ids.end());
             s.empty.insert(e.empty.begin(), e.empty.end());
             s.outsideEmpty = s.outsideEmpty || e.outsideEmpty;
+            s.heldOutside.insert(e.heldOutside.begin(), e.heldOutside.end());
             if (first) s.full = e.full;
             else std::erase_if(s.full, [&](const Place& f) { return !e.full.contains(f); });
             first = false;
@@ -709,6 +713,11 @@ class LoanChecker {
   void change(const Place& p, const Stmt* at, const State& s, bool keepsPointees = false) {
     if (checking_) recordWrite(p);
     if (!checking_ || error_) return;
+    for (const auto& [id, holder] : s.heldOutside)
+      if (mayInvalidate(p, loans_[id].place) &&
+          !(keepsPointees && loans_[id].place.root == p.root && belowElement(p, loans_[id].place)))
+        return fail(at, "changes '" + text(p) + "' while '" + text(holder) + "' holds a loan of '" +
+                            text(loans_[id].place) + "', which outlives the function");
     for (const VarDecl* v : liveAt(at, s)) {
       if (v == consumed_) continue;  // skrivs över av anropets resultat
       auto st = s.find(v);
@@ -1735,6 +1744,8 @@ class LoanChecker {
         } else if (w.place.root.kind == Root::referent || w.place.root.kind == Root::self) {
           if (checking_) record_.known = false;
           escape(incoming, call, "may store");
+          if (!error_)
+            for (int id : bind(incoming)) s.heldOutside[id] = w.place;  // STN-92
         } else {
           return fail(call, "cannot follow the loans the call may store in '" + text(w.place) + "'");
         }
@@ -2460,7 +2471,7 @@ class LoanChecker {
         s[vd] = bind(values(b->getRHS(), s));
       } else if (b->getOpcode() == BO_Assign && types_.loanBearing(b->getLHS()->getType())) {
         escape(values(b->getRHS(), s), st, "stores");
-        if (!origin) storeOutside(target, values(b->getRHS(), s), st);
+        if (!origin) storeOutside(target, values(b->getRHS(), s), st, s);
       }
       return;
     }
@@ -2553,7 +2564,7 @@ class LoanChecker {
           s[vd] = bind(rhs);
         } else {
           escape(rhs, st, "stores");
-          if (!error_) storeOutside(places(oc->getArg(0), s), rhs, st);
+          if (!error_) storeOutside(places(oc->getArg(0), s), rhs, st, s);
         }
       }
       return;
@@ -2647,14 +2658,24 @@ class LoanChecker {
   // Ett lån lagras i något annat än en lokal variabel (ett fält, ett element):
   // modellen kan inte följa det. Lån av parametrar och *this är tillåtna
   // (de lever längre än funktionen), lokala inte.
-  void storeOutside(const std::vector<PlaceRef>& target, const std::vector<PlaceRef>& refs, const Stmt* at) {
+  void storeOutside(const std::vector<PlaceRef>& target, const std::vector<PlaceRef>& refs, const Stmt* at,
+                    State& s) {
     // Ett sparat lån är en effekt som sammanfattningen inte uttrycker.
     if (checking_ && !refs.empty()) record_.known = false;
-    for (const PlaceRef& r : refs)
+    std::string to = target.empty() ? std::string("?") : text(target.front().place);
+    for (const PlaceRef& r : refs) {
       if (r.place.root.kind != Root::referent && r.place.root.kind != Root::self &&
           r.place.root.kind != Root::staticStorage)
-        return fail(at, "stores a loan of '" + text(r.place) + "' in '" +
-                            (target.empty() ? std::string("?") : text(target.front().place)) + "'");
+        return fail(at, "stores a loan of '" + text(r.place) + "' in '" + to + "'");
+      // STN-92: självreferens. En kopia av objektet skulle låna originalet,
+      // och en flytt eller ändring av objektet gör lånet ogiltigt.
+      for (const PlaceRef& t : target)
+        if (t.place.root == r.place.root || mayAlias(t.place.root, r.place.root))
+          return fail(at, "stores a loan of '" + text(r.place) + "' in '" + text(t.place) +
+                              "', which may be the same object (a copy would borrow the original)");
+    }
+    // STN-92: lånet lever efter funktionen; en senare ändring av det lånade avvisas.
+    for (int id : bind(refs)) s.heldOutside[id] = target.empty() ? Place{} : target.front().place;
   }
 
   void initializer(const CXXCtorInitializer& init, State& s) {

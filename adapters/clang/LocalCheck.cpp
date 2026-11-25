@@ -1958,7 +1958,14 @@ class Checker {
         return "unsupported initializer_list backing array";
       return args(array->inits());
     }
-    if (const auto* d = dyn_cast<CXXDefaultInitExpr>(e)) return expr(d->getExpr());
+    if (const auto* d = dyn_cast<CXXDefaultInitExpr>(e)) {
+      // STN-66: en standardinitierare är en del av konstruktionen, som en
+      // initierare i konstruktorn (`std::span<const char> v{t};` lånar ett
+      // annat fält: en kopia lånar originalet, STN-92).
+      if (auto r = expr(d->getExpr())) return r;
+      if (usesThis(d->getExpr())) return "initializer of field '" + d->getField()->getNameAsString() + "' uses *this";
+      return std::nullopt;
+    }
     // Temporärer av värdetyp: destruktorn är trivial, implicit (medlemsvis)
     // eller del av en betrodd typ.
     if (const auto* m = dyn_cast<MaterializeTemporaryExpr>(e)) return pass(m->getSubExpr());
@@ -2122,6 +2129,7 @@ class Checker {
         } else if (auto r = expr(init)) {
           return r;
         }
+        if (usesThis(init)) return "initializer of " + what + " uses *this";
         continue;
       }
       // STN-75: ett arrayfält utan initierare initieras element för element,

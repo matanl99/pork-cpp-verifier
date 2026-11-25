@@ -122,7 +122,9 @@ delegating initialiser as a call to that constructor (STN-23);
 (b) a reference field shall be bound directly to a reference parameter of
 the constructor;
 (c) an initialiser shall not use `*this` (no field, no method, no `this`):
-the object is not fully initialised yet;
+the object is not fully initialised yet. This also holds for a default
+member initialiser used by an implicit constructor or an aggregate
+initialisation (`std::span<const char> v{t};`, STN-92);
 (d) every subobject (base or field) shall be initialised by an initialiser,
 a default member initialiser or its own default constructor (an empty base
 has nothing to initialise), so the body starts from a fully
@@ -772,6 +774,17 @@ resize, `v[0] = ...`, `v[0].reset()`) or a call of a user function that
 changes the container (its summary says that it changes it, not how). Where
 the loan model cannot tell that a loan lies below the element (a field of
 the owned object, `int& x = v[0]->value;`), the loan ends.
+
+STN-92  Loans stored outside the function  [rejects]
+A loan stored in something that outlives the function (a field of a
+reference parameter or of `*this`, by assignment or by a call that may store
+it) shall be treated as used until the function returns: a later change in
+the function that invalidates it (STN-62) shall be rejected, also when the
+holder is not used again, since the caller uses it afterwards. A loan of an
+object's own storage shall not be stored in the same object, nor in an
+object that may be it (`x.v = x.t;`, `v = t;` in a method): a copy of the
+object would borrow the original, and moving or changing the object
+invalidates the loan.
 
 STN-79  Lambdas as arguments to std
 A lambda shall also be allowed directly as an argument of a call to a std
