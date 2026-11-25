@@ -91,6 +91,12 @@ const CallExpr* flowRequirement(const Stmt* s, bool* result) {
 
 
 namespace {
+// STN-88: std-mallar med delat ägande (libstdc++ har baserna __shared_ptr och __weak_ptr).
+bool sharedOwnership(const std::string& tmpl) {
+  return tmpl == "std::shared_ptr" || tmpl == "std::__shared_ptr" || tmpl == "std::weak_ptr" ||
+         tmpl == "std::__weak_ptr" || tmpl == "std::enable_shared_from_this";
+}
+
 // Den anropade (eller, före instansiering, någon kandidat i uppslagningen)
 // bär en av annoteringarna.
 bool calls(const CallExpr& c, std::initializer_list<const char*> annotations) {
@@ -466,6 +472,7 @@ class TypeRules {
     // Betrodd, eller utan något att äga: trivial destruktor (std::pair av en
     // iterator och en bool).
     std::string tmpl = spec->getSpecializedTemplate()->getQualifiedNameAsString();
+    if (sharedOwnership(tmpl)) return false;  // STN-88
     bool trusted = trust_.types.contains(tmpl);
     if (!trusted && !rd->getDefinition()->hasTrivialDestructor()) return false;
     bool loan = false;
@@ -536,7 +543,12 @@ class TypeRules {
   // Utöver värdetyperna: polymorfa klasser och klasser med baser, där
   // baserna är objekttyper och fälten värdetyper eller portreferenser.
   std::optional<std::string> objectReason(const CXXRecordDecl& decl) {
-    if (!recordReason(decl)) return std::nullopt;
+    auto valueReason = recordReason(decl);
+    if (!valueReason) return std::nullopt;
+    // STN-88: inte heller en objekttyp bakom en referens.
+    if (const auto* spec = dyn_cast<ClassTemplateSpecializationDecl>(&decl);
+        spec != nullptr && sharedOwnership(spec->getSpecializedTemplate()->getQualifiedNameAsString()))
+      return valueReason;
     std::string name = recordName(decl);
     const CXXRecordDecl* rd = decl.getDefinition();
     if (rd == nullptr) return name + " is incomplete";
@@ -699,6 +711,9 @@ class TypeRules {
       // STN-71: en vy av en temporär array, aldrig en värdetyp (inte heller
       // med `type std::initializer_list` i trust-filen).
       if (tmpl == "std::initializer_list") return name + " is a view of a temporary array";
+      // STN-88: delat ägande, aldrig en värdetyp (inte heller med `type
+      // std::shared_ptr` i trust-filen): två olika vägar kan vara samma objekt.
+      if (sharedOwnership(tmpl)) return name + " shares ownership (two values may be the same object)";
       if (trust_.types.contains(tmpl)) {
         for (const TemplateArgument& a : spec->getTemplateArgs().asArray())
           if (auto r = templateArgReason(a, name)) return r;

@@ -699,6 +699,16 @@ the function may write through one, is rejected as for STN-77
 no line gets the cautious default, and with two or more loan-bearing
 arguments it is rejected (STN-77).
 
+STN-88  Shared ownership  [rejects]
+`std::shared_ptr<T>` and `std::weak_ptr<T>` (also their libstdc++ bases and
+`std::enable_shared_from_this`) shall never be value types, object types or
+loan values, also when the trust file lists them as types: two copies share
+one object, so two different paths may be the same object, which the aliasing
+rule at calls (G3) and the loans per path (STN-62) assume they are not
+(`keep(a, b)` with `Box b = a` writes through a.v while a reference into
+*b.v lives). A type argument that is a loan value does not make one
+(`std::shared_ptr<int*>`).
+
 STN-79  Lambdas as arguments to std
 A lambda shall also be allowed directly as an argument of a call to a std
 function (`std::sort(b, e, [](const T& a, const T& b) { ... })`), or a local

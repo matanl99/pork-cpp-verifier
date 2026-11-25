@@ -1,0 +1,16 @@
+type std::unique_ptr
+type std::default_delete
+std::unique_ptr::*
+type std::shared_ptr
+type std::__shared_ptr
+type std::weak_ptr
+type std::__weak_ptr
+std::shared_ptr::*
+std::__shared_ptr::*
+std::__shared_ptr_access::*
+std::weak_ptr::*
+std::__weak_ptr::*
+std::make_shared
+type std::allocator
+type std::vector
+std::vector::*
