@@ -97,11 +97,10 @@ void bad_reset_field(Outer& o) {
   Cursor_reset(o.c, t);
 }
 
-// För försiktigt: Cursor_reset lagrar ett lån, så dess sammanfattning är okänd,
-// och anroparen antar att den kan skriva genom lånen i out (som kan vara s).
-// En sammanfattning "lagrar ett lån av argument j i argument k" skulle godta det.
-// rules: STN-62
-// expect: not-stone: loans: operands
+// Cursor_reset lagrar ett lån av t i c: det står i dess sammanfattning
+// (STN-93), så anroparen vet att inget skrivs genom lånen i out.
+// rules: STN-62, STN-93
+// expect: stone: assuming
 void reset_from_param(Cursor& out, const std::string& s) { Cursor_reset(out, s); }
 
 #ifdef PORK_RUN
@@ -116,5 +115,6 @@ PORK_RUN_CASES(
     {"bad_assign_whole", [] { Cursor c{}; bad_assign_whole(c); return use(c) == 'a' ? 0 : 1; }},
     {"bad_assign_local", [] { Cursor c{}; bad_assign_local(c); return use(c) == 'a' ? 0 : 1; }},
     {"bad_reset_field", [] { Outer o{}; bad_reset_field(o); return use(o.c) == 'a' ? 0 : 1; }},
-    {"change_before", [] { std::string a = "q", b = "r"; return change_before(a, b) == 'r' ? 0 : 1; }})
+    {"change_before", [] { std::string a = "q", b = "r"; return change_before(a, b) == 'r' ? 0 : 1; }},
+    {"reset_from_param", [] { std::string s = "abc"; Cursor c{}; reset_from_param(c, s); return use(c) == 'a' ? 0 : 1; }})
 #endif

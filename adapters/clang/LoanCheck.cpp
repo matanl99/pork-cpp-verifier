@@ -337,6 +337,15 @@ struct Summary {
     auto operator<=>(const Ret&) const = default;
   };
   std::set<Ret> returns;
+  // STN-93: lån som lagras i en parameter eller *this (plats `slot` + `path`):
+  // `src` är lånet, som i `returns`.
+  struct Store {
+    unsigned slot;
+    Path path;
+    Ret src;
+    auto operator<=>(const Store&) const = default;
+  };
+  std::set<Store> stores;
   // Tomhet (STN-89), vägar relativt platserna som i `writes`: antas inte tomma
   // vid ingången (exakt platsen, eller allt under den), kan vara tomma eller är
   // säkert inte tomma efteråt; absoluta platser för det referensfält når.
@@ -677,18 +686,40 @@ class LoanChecker {
     else record_.writes.insert({static_cast<unsigned>(*slot), p.path});
   }
 
+  // Ett lån i sammanfattningens form (relativt en plats, eller absolut).
+  std::optional<Summary::Ret> summaryRef(const PlaceRef& r) const {
+    std::optional<int> slot = slotOf(r.place.root);
+    if (!slot || *slot == -2 || throughPointerField(r.place.path)) return std::nullopt;
+    // Hopslagna nivåer (extra) sparas som [*]-steg: hos anroparen är det
+    // flera nivåer ägd lagring, och behållaren är okänd (STN-77).
+    Place rel{{}, r.place.path};
+    for (unsigned i = 0; i < r.place.extra; ++i) rel.path.push_back(nullptr);
+    return Summary::Ret{*slot, *slot == -1 ? r.place : rel, r.exclusive};
+  }
+
   void recordReturns(const std::vector<PlaceRef>& refs) {
     for (const PlaceRef& r : refs) {
-      std::optional<int> slot = slotOf(r.place.root);
-      if (!slot || *slot == -2 || throughPointerField(r.place.path)) {
+      if (std::optional<Summary::Ret> ret = summaryRef(r)) record_.returns.insert(*ret);
+      else record_.known = false;
+    }
+  }
+
+  // STN-93: ett lån lagras i en parameter eller i *this.
+  void recordStores(const std::vector<PlaceRef>& target, const std::vector<PlaceRef>& refs) {
+    for (const PlaceRef& t : target) {
+      std::optional<int> slot = slotOf(t.place.root);
+      if (!slot || *slot < 0 || throughPointerField(t.place.path) || t.place.extra != 0) {
         record_.known = false;
-        continue;
+        return;
       }
-      // Hopslagna nivåer (extra) sparas som [*]-steg: hos anroparen är det
-      // flera nivåer ägd lagring, och behållaren är okänd (STN-77).
-      Place rel{{}, r.place.path};
-      for (unsigned i = 0; i < r.place.extra; ++i) rel.path.push_back(nullptr);
-      record_.returns.insert({*slot, *slot == -1 ? r.place : rel, r.exclusive});
+      for (const PlaceRef& r : refs) {
+        std::optional<Summary::Ret> src = summaryRef(r);
+        if (!src) {
+          record_.known = false;
+          return;
+        }
+        record_.stores.insert({static_cast<unsigned>(*slot), t.place.path, *src});
+      }
     }
   }
 
@@ -845,11 +876,24 @@ class LoanChecker {
     return heldIn(places(e, s), e->getType(), e, s);
   }
 
+  // Ett fält (inga element) i en egen lokal variabel som inte är en referens:
+  // variabeln, som håller lånen för hela objektet (ett ursprung per objekt,
+  // STN-93). Annars nullptr.
+  const VarDecl* localHolder(const Place& p) const {
+    const VarDecl* vd = rootVar(p);
+    if (vd == nullptr || vd->getType()->isReferenceType() || !vd->hasLocalStorage() ||
+        vd->getParentFunctionOrMethod() != &fd_ || p.via != nullptr)
+      return nullptr;
+    for (const FieldDecl* f : p.path)
+      if (f == nullptr) return nullptr;
+    return vd;
+  }
+
   // Lånen som objekten på platserna håller (objektens typ: `t`).
   std::vector<PlaceRef> heldIn(const std::vector<PlaceRef>& objects, QualType t, const Expr* e, const State& s) {
     std::vector<PlaceRef> out;
     for (const PlaceRef& p : objects) {
-      const VarDecl* vd = p.place.path.empty() ? rootVar(p.place) : nullptr;
+      const VarDecl* vd = p.place.path.empty() ? rootVar(p.place) : localHolder(p.place);
       if (vd != nullptr) {
         if (auto it = s.find(vd); it != s.end())
           for (const PlaceRef& r : held(it->second, true)) out.push_back(r);
@@ -1665,6 +1709,29 @@ class LoanChecker {
     if (own != nullptr) {
       for (const auto& c : ownChanges) change(c, call, s);
       for (const Place& p : own->absoluteWrites) change(p, call, s);
+      // STN-93: lånen den anropade lagrar i sina operander.
+      for (const Summary::Store& st : own->stores) {
+        if (error_) return;
+        std::vector<PlaceRef> where = mapSlot(ops, st.slot, st.path, s);
+        std::vector<PlaceRef> incoming;
+        if (st.src.slot < 0) incoming.push_back({st.src.place, st.src.exclusive, -1});
+        else incoming = mapSlot(ops, static_cast<unsigned>(st.src.slot), st.src.place.path, s);
+        for (PlaceRef& r : incoming) r.loan = -1;
+        if (incoming.empty()) continue;
+        for (const PlaceRef& w : where) {
+          const VarDecl* vd = w.place.path.empty() ? rootVar(w.place) : localHolder(w.place);
+          if (vd != nullptr && vd->hasLocalStorage() && !vd->getType()->isReferenceType() &&
+              vd->getParentFunctionOrMethod() == &fd_) {
+            growLocal(vd, incoming, call, s, false);
+          } else if (w.place.root.kind == Root::referent || w.place.root.kind == Root::self) {
+            escape(incoming, call, "may store");
+            if (!error_) storeOutside({w}, incoming, call, s);
+          } else {
+            return fail(call, "cannot follow the loans the call may store in '" + text(w.place) + "'");
+          }
+          if (error_) return;
+        }
+      }
     } else {
       for (const Reach& w : refs) {
         if (!w.written || w.loanSet || !w.invalidates) continue;
@@ -1737,10 +1804,11 @@ class LoanChecker {
       if (incoming.empty()) continue;
       for (const PlaceRef& w : where) {
         const auto* vd = dyn_cast_or_null<VarDecl>(w.place.root.decl);
-        if (w.place.root.kind == Root::object && w.place.path.empty() && vd != nullptr && vd->hasLocalStorage() &&
-            !vd->getType()->isReferenceType()) {
-          std::set<int> more = bind(incoming);
-          s[vd].insert(more.begin(), more.end());
+        if ((w.place.root.kind == Root::object && w.place.path.empty() && vd != nullptr && vd->hasLocalStorage() &&
+             !vd->getType()->isReferenceType()) ||
+            localHolder(w.place) != nullptr) {
+          vd = localHolder(w.place) != nullptr ? localHolder(w.place) : vd;
+          growLocal(vd, incoming, call, s, false);
         } else if (w.place.root.kind == Root::referent || w.place.root.kind == Root::self) {
           if (checking_) record_.known = false;
           escape(incoming, call, "may store");
@@ -2468,10 +2536,13 @@ class LoanChecker {
       bool origin = vd != nullptr && vd->hasLocalStorage() && !vd->getType()->isReferenceType();
       if (origin && b->getOpcode() == BO_Assign && vd->getType()->isPointerType()) assignPointer(vd, b->getRHS(), s);
       if (origin && b->getOpcode() == BO_Assign && types_.loanBearing(vd->getType())) {
-        s[vd] = bind(values(b->getRHS(), s));
+        growLocal(vd, values(b->getRHS(), s), st, s, true);
       } else if (b->getOpcode() == BO_Assign && types_.loanBearing(b->getLHS()->getType())) {
-        escape(values(b->getRHS(), s), st, "stores");
-        if (!origin) storeOutside(target, values(b->getRHS(), s), st, s);
+        std::vector<PlaceRef> rhs = values(b->getRHS(), s);
+        if (!origin && !storeInLocal(target, rhs, st, s)) {
+          escape(rhs, st, "stores");
+          if (!error_) storeOutside(target, rhs, st, s);
+        }
       }
       return;
     }
@@ -2561,10 +2632,10 @@ class LoanChecker {
         const auto* vd = dr != nullptr ? dyn_cast<VarDecl>(dr->getDecl()) : nullptr;
         std::vector<PlaceRef> rhs = oc->getArg(1)->isGLValue() ? heldBy(oc->getArg(1), s) : values(oc->getArg(1), s);
         if (vd != nullptr && vd->hasLocalStorage() && !vd->getType()->isReferenceType()) {
-          s[vd] = bind(rhs);
-        } else {
+          growLocal(vd, rhs, st, s, true);
+        } else if (std::vector<PlaceRef> target = places(oc->getArg(0), s); !storeInLocal(target, rhs, st, s)) {
           escape(rhs, st, "stores");
-          if (!error_) storeOutside(places(oc->getArg(0), s), rhs, st, s);
+          if (!error_) storeOutside(target, rhs, st, s);
         }
       }
       return;
@@ -2658,10 +2729,34 @@ class LoanChecker {
   // Ett lån lagras i något annat än en lokal variabel (ett fält, ett element):
   // modellen kan inte följa det. Lån av parametrar och *this är tillåtna
   // (de lever längre än funktionen), lokala inte.
+  // Lokala variabeln `vd` lånar dessutom `refs` (efter en lagring i den). En
+  // temporär dör vid slutet av det fullständiga uttrycket: lagras ett lån av
+  // den i en variabel som används senare dinglar det (STN-93).
+  void growLocal(const VarDecl* vd, const std::vector<PlaceRef>& refs, const Stmt* at, State& s, bool replace) {
+    std::set<int> more = bind(refs);
+    if (replace) s[vd] = more;
+    else s[vd].insert(more.begin(), more.end());
+    if (!checking_ || error_ || !liveAt(at, s).contains(vd)) return;
+    for (int id : more)
+      if (loans_[id].place.root.kind == Root::temporary)
+        return fail(at, name(vd) + " borrows a temporary that is destroyed at the end of the full-expression");
+  }
+
+  // STN-93: en lagring i ett fält i en egen lokal variabel (`c.text = t`):
+  // variabeln lånar dessutom det lagrade (ursprunget växer, krymper aldrig).
+  bool storeInLocal(const std::vector<PlaceRef>& target, const std::vector<PlaceRef>& refs, const Stmt* at,
+                    State& s) {
+    if (target.size() != 1) return false;
+    const VarDecl* vd = localHolder(target.front().place);
+    if (vd == nullptr || target.front().place.path.empty()) return false;
+    growLocal(vd, refs, at, s, false);
+    return true;
+  }
+
   void storeOutside(const std::vector<PlaceRef>& target, const std::vector<PlaceRef>& refs, const Stmt* at,
                     State& s) {
-    // Ett sparat lån är en effekt som sammanfattningen inte uttrycker.
-    if (checking_ && !refs.empty()) record_.known = false;
+    // Det sparade lånet är en del av sammanfattningen (STN-93).
+    if (checking_ && !refs.empty()) recordStores(target, refs);
     std::string to = target.empty() ? std::string("?") : text(target.front().place);
     for (const PlaceRef& r : refs) {
       if (r.place.root.kind != Root::referent && r.place.root.kind != Root::self &&

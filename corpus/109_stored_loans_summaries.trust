@@ -1,0 +1,5 @@
+type std::span
+type std::basic_string
+type std::allocator
+std::basic_string::*
+std::allocator::*

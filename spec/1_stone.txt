@@ -782,9 +782,25 @@ it) shall be treated as used until the function returns: a later change in
 the function that invalidates it (STN-62) shall be rejected, also when the
 holder is not used again, since the caller uses it afterwards. A loan of an
 object's own storage shall not be stored in the same object, nor in an
-object that may be it (`x.v = x.t;`, `v = t;` in a method): a copy of the
+object that may be it, where the object is outside the function (`x.v =
+x.t;` with x a reference parameter, `v = t;` in a method): a copy of the
 object would borrow the original, and moving or changing the object
-invalidates the loan.
+invalidates the loan. For a local object see STN-93.
+
+STN-93  Loans stored in objects
+A local variable of a loan-bearing type (a struct with a `std::span`,
+iterator or pointer field, STN-39) holds one set of loans for the whole
+object. A loan stored in a field of it (`c.text = t;`, or by a call that may
+store it) shall be added to that set: the origin grows and never shrinks, so
+`Cursor c{b, 0}; c.text = a;` still borrows b. A loan of a temporary stored in
+a variable that is used after the full-expression shall be rejected. A
+function in the translation unit that stores a loan in a parameter or in
+`*this` shall have that in its summary (the loan of what argument j reaches,
+stored in argument k), and the caller shall follow it as if it had stored
+the loan itself (STN-92 when the target is outside the caller). A loan of a
+local object's own storage may be stored in the object (`x.v = x.t;` on a
+local x): the loan model follows it, so a copy of x borrows x.t, and changing
+x.t while x is used later is rejected.
 
 STN-79  Lambdas as arguments to std
 A lambda shall also be allowed directly as an argument of a call to a std
