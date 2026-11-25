@@ -17,38 +17,43 @@ std::vector<std::string> words(std::string_view line) {
   return out;
 }
 
-bool matches(LoanSummaries::Shape shape, const std::vector<bool>& it) {
-  if (it.size() < shape.iterators || (!shape.more && it.size() != shape.iterators)) return false;
-  return std::all_of(it.begin(), it.begin() + shape.iterators, [](bool b) { return b; });
+using Param = LoanSummaries::Param;
+
+bool hasRange(const std::vector<Param>& ps) { return std::ranges::find(ps, Param::range) != ps.end(); }
+
+bool matches(const LoanSummaries::Shape& shape, const std::vector<Param>& ps) {
+  if (hasRange(ps) && !hasRange(shape.params)) return false;
+  if (ps.size() < shape.params.size() || (!shape.more && ps.size() != shape.params.size())) return false;
+  return std::equal(shape.params.begin(), shape.params.end(), ps.begin());
 }
 
-// Mer specifik först: exakt form före öppen, sedan fler iteratorer.
-bool moreSpecific(LoanSummaries::Shape a, LoanSummaries::Shape b) {
+// Mer specifik först: exakt form före öppen, sedan fler parametrar.
+bool moreSpecific(const LoanSummaries::Shape& a, const LoanSummaries::Shape& b) {
   if (a.more != b.more) return !a.more;
-  return a.iterators > b.iterators;
+  return a.params.size() > b.params.size();
 }
 
-// `erase(iterator)` -> ("erase", {1, false}); `f(iterator,...)` -> ("f", {1, true}).
+// `erase(iterator)` -> ("erase", {{iterator}, false}); `f(range,...)` -> ("f", {{range}, true}).
 // `operator()` har ingen form.
 std::expected<std::pair<std::string, LoanSummaries::Shape>, std::string> splitShape(const std::string& w) {
   auto open = w.find('(');
   if (!w.ends_with(")") || w.ends_with("operator()") || open == std::string::npos || open == 0)
     return std::pair{w, LoanSummaries::Shape{}};
-  LoanSummaries::Shape shape{0, false};
+  LoanSummaries::Shape shape{{}, false};
   std::string items = w.substr(open + 1, w.size() - open - 2);
   std::istringstream in(items);
   std::vector<std::string> parts;
   for (std::string part; std::getline(in, part, ',');) parts.push_back(part);
   for (std::size_t k = 0; k < parts.size(); ++k) {
-    if (parts[k] == "iterator" && !shape.more) {
-      ++shape.iterators;
-    } else if (parts[k] == "..." && k + 1 == parts.size() && shape.iterators > 0) {
+    if ((parts[k] == "iterator" || parts[k] == "range") && !shape.more) {
+      shape.params.push_back(parts[k] == "range" ? Param::range : Param::iterator);
+    } else if (parts[k] == "..." && k + 1 == parts.size() && !shape.params.empty()) {
       shape.more = true;
     } else {
-      return std::unexpected("unknown parameter shape in '" + w + "' (iterator, ..., ending with '...')");
+      return std::unexpected("unknown parameter shape in '" + w + "' (iterator, range, ..., ending with '...')");
     }
   }
-  if (shape.iterators == 0) return std::unexpected("unknown parameter shape in '" + w + "'");
+  if (shape.params.empty()) return std::unexpected("unknown parameter shape in '" + w + "'");
   return std::pair{w.substr(0, open), shape};
 }
 
@@ -61,10 +66,10 @@ std::optional<LoanRule> LoanSummaries::find(const Query& q) const {
     if (n.empty()) continue;
     const LoanRule* best = nullptr;
     Shape bestShape;
-    for (auto it = rules_.lower_bound({q.category, n, Shape{0, false}});
+    for (auto it = rules_.lower_bound({q.category, n, Shape{{}, false}});
          it != rules_.end() && std::get<0>(it->first) == q.category && std::get<1>(it->first) == n; ++it) {
-      const Shape s = std::get<2>(it->first);
-      if (!matches(s, q.iteratorParams)) continue;
+      const Shape& s = std::get<2>(it->first);
+      if (!matches(s, q.params)) continue;
       if (best == nullptr || moreSpecific(s, bestShape)) {
         best = &it->second;
         bestShape = s;

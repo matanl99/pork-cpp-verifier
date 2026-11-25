@@ -15,7 +15,9 @@ LoanSummaries builtin() {
 
 std::optional<LoanRule> find(const LoanSummaries& s, Cat c, std::string qualified, std::string name,
                              std::vector<bool> it = {}, bool isConst = false) {
-  return s.find({c, std::move(qualified), std::move(name), std::move(it), isConst});
+  std::vector<LoanSummaries::Param> ps;
+  for (bool b : it) ps.push_back(b ? LoanSummaries::Param::iterator : LoanSummaries::Param::other);
+  return s.find({c, std::move(qualified), std::move(name), std::move(ps), isConst});
 }
 
 TEST(LoanSummariesTest, BuiltinFileParses) { EXPECT_GT(builtin().size(), 100u); }
@@ -108,10 +110,10 @@ TEST(LoanSummariesTest, Intervals) {
 
 TEST(LoanSummariesTest, ResultIn) {
   // [alg.remove]: resultatet är en position i intervallet (STN-85).
-  auto r = builtin().find({LoanSummaries::Category::free, "std::remove_if", "remove_if", {true, true, false}});
+  auto r = find(builtin(), Cat::free, "std::remove_if", "remove_if", {true, true, false});
   ASSERT_TRUE(r.has_value());
   EXPECT_EQ(r->resultIn, std::optional<unsigned>(0));
-  auto sort = builtin().find({LoanSummaries::Category::free, "std::sort", "sort", {true, true}});
+  auto sort = find(builtin(), Cat::free, "std::sort", "sort", {true, true});
   ASSERT_TRUE(sort.has_value());
   EXPECT_FALSE(sort->resultIn.has_value());
   LoanSummaries s;
@@ -119,6 +121,30 @@ TEST(LoanSummariesTest, ResultIn) {
             "f:1: unknown modifier 'resultIn(x)' (position, range, consumes, forwards, copies, interval(i,j) with i < j, resultIn(i))");
   EXPECT_EQ(s.parse("free f : default resultIn(1)y\n", "f").error(),
             "f:1: unknown modifier 'resultIn(1)y' (position, range, consumes, forwards, copies, interval(i,j) with i < j, resultIn(i))");
+}
+
+TEST(LoanSummariesTest, RangeForm) {
+  // STN-87: intervallformen av en niebloid ärver inte iteratorformens rad.
+  using P = LoanSummaries::Param;
+  auto query = [](std::string name, std::vector<P> ps) {
+    return builtin().find({Cat::free, "", std::move(name), std::move(ps), false});
+  };
+  auto copy = query("copy", {P::range, P::iterator});
+  ASSERT_TRUE(copy.has_value());
+  EXPECT_TRUE(copy->intervals.empty());
+  auto move = query("move", {P::range, P::iterator});
+  ASSERT_TRUE(move.has_value());
+  EXPECT_EQ(move->effect, LoanEffect::standard);
+  EXPECT_EQ(query("move", {P::other})->effect, LoanEffect::identity);
+  EXPECT_FALSE(query("rotate", {P::range, P::iterator}).has_value());
+  EXPECT_EQ(query("rotate", {P::iterator, P::iterator, P::iterator})->intervals.size(), 3u);
+  // En form utan range gäller inte heller.
+  LoanSummaries s;
+  ASSERT_TRUE(s.parse("free f(iterator,...) : reads\nfree g : reads\nfree h(range,...) : reads\n", "f"));
+  EXPECT_FALSE(s.find({Cat::free, "", "f", {P::iterator, P::range}, false}).has_value());
+  EXPECT_FALSE(s.find({Cat::free, "", "g", {P::range}, false}).has_value());
+  EXPECT_TRUE(s.find({Cat::free, "", "h", {P::range, P::other}, false}).has_value());
+  EXPECT_FALSE(s.find({Cat::free, "", "h", {P::iterator}, false}).has_value());
 }
 
 TEST(LoanSummariesTest, Errors) {
@@ -136,7 +162,7 @@ TEST(LoanSummariesTest, Errors) {
             "f:1: unknown modifier 'interval(0,1)x' (position, range, consumes, forwards, copies, interval(i,j) with i < j, resultIn(i))");
   EXPECT_EQ(s.parse("# c\nowner size size : reads\n", "f").error(), "f:2: 'size' is listed twice for owner");
   EXPECT_EQ(s.parse("owner erase(key) : reads\n", "f").error(),
-            "f:1: unknown parameter shape in 'erase(key)' (iterator, ..., ending with '...')");
+            "f:1: unknown parameter shape in 'erase(key)' (iterator, range, ..., ending with '...')");
   EXPECT_FALSE(s.parse("free f(...,iterator) : reads\n", "f"));
   EXPECT_TRUE(s.parse("free operator() : reads\n", "f"));
 }

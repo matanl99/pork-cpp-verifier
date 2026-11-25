@@ -28,7 +28,9 @@ namespace pork {
 //               (iterator)           en parameter, en iterator
 //               (iterator,iterator)  två parametrar, båda iteratorer
 //               (iterator,...)       första parametern är en iterator
-//             Utan form: alla överlagringar.
+//               (range,...)          första parametern är ett intervall (en
+//                                    niebloid: std::ranges::copy(r, out))
+//             Utan form: alla överlagringar utom intervallformer av niebloider.
 //   effekt    default      ingen sammanfattning: den försiktiga standarden
 //             reads        läser, skriver ingenting (inte heller genom lån)
 //             access       som reads; resultatet lånar ägd lagring i objektet (eller arg0)
@@ -84,29 +86,34 @@ struct LoanRule {
 class LoanSummaries {
  public:
   enum class Category { owner, pointer, free };
-  // Parameterform: de första `iterators` parametrarna är iteratorer; utan
-  // `more` har funktionen exakt så många parametrar. `name` utan form är
-  // {0, true}. `erase(iterator)` = {1, false}, `move(iterator,...)` = {1, true},
-  // `transform(iterator,iterator,iterator,iterator,iterator,...)` = {5, true}.
+  // Parameterns slag i en form: en iterator (eller pekare), eller ett intervall
+  // som argument till en niebloid (`std::ranges::copy(r, out)`: r har begin()).
+  enum class Param { other, iterator, range };
+  // Parameterform: de första parametrarna har slagen i `params`; utan `more`
+  // har funktionen exakt så många parametrar. `name` utan form är {{}, true}.
+  // `erase(iterator)` = {{iterator}, false}, `move(iterator,...)` =
+  // {{iterator}, true}, `copy(range,...)` = {{range}, true}.
   struct Shape {
-    unsigned iterators = 0;
+    std::vector<Param> params;
     bool more = true;
     auto operator<=>(const Shape&) const = default;
   };
 
   // Ett anrop: kategori, kvalificerat mallnamn (`std::map::insert`), namn
-  // (`insert`), vilka parametrar som är iteratorer, const-metod.
+  // (`insert`), parametrarnas slag, const-metod.
   struct Query {
     Category category;
     std::string qualified;
     std::string name;
-    std::vector<bool> iteratorParams;
+    std::vector<Param> params;
     bool isConst = false;
   };
 
   // Mest specifik först: kvalificerat namn före namn före `<const>`, och
-  // inom dem en exakt form före en öppen, fler iteratorer före färre, ingen
-  // form sist. nullopt: ingen regel (standarden).
+  // inom dem en exakt form före en öppen, fler parametrar före färre, ingen
+  // form sist. Ett anrop med ett intervall bland parametrarna träffar bara en
+  // form som nämner `range`: intervallformen av en niebloid ärver aldrig
+  // iteratorformens roller. nullopt: ingen regel (standarden).
   std::optional<LoanRule> find(const Query& q) const;
 
   // Läs regler ur text (`source` i felmeddelanden). Regler ersätter

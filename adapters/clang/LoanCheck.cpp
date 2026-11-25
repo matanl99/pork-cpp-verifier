@@ -265,12 +265,36 @@ bool iteratorType(QualType t) {
   return rd != nullptr && isGslPointer(rd);
 }
 
+// Ett intervall som argument till en niebloid: en array eller en klass med
+// begin() ([range.range]: ranges::begin(r)), också en vy (span, string_view),
+// fast clang märker den [[gsl::Pointer]]. std::ranges::copy(r, out) ska inte
+// få raden för copy(first, last, out).
+bool rangeType(QualType t) {
+  QualType n = t.getNonReferenceType();
+  if (n->isArrayType()) return true;
+  const CXXRecordDecl* rd = n->getAsCXXRecordDecl();
+  if (rd == nullptr || !rd->hasDefinition()) return false;
+  rd = rd->getDefinition();
+  const IdentifierInfo& begin = rd->getASTContext().Idents.get("begin");
+  bool found = !rd->lookup(&begin).empty();
+  rd->forallBases([&](const CXXRecordDecl* b) {
+    found = found || !b->lookup(&begin).empty();
+    return true;
+  });
+  return found;
+}
+
 LoanRule libraryRuleImpl(const LoanSummaries& lib, const FunctionDecl* fd) {
   if (fd == nullptr || !inStd(*fd)) return {};
   LoanSummaries::Query q{LoanSummaries::Category::free, {}, {}, {}, false};
-  for (const ParmVarDecl* p : fd->parameters()) q.iteratorParams.push_back(iteratorType(p->getType()));
-  if (std::string n = niebloid(*fd); !n.empty()) {
-    q.name = n;
+  const std::string algorithm = niebloid(*fd);
+  using Param = LoanSummaries::Param;
+  for (const ParmVarDecl* p : fd->parameters())
+    q.params.push_back(!algorithm.empty() && rangeType(p->getType()) ? Param::range
+                       : iteratorType(p->getType())                    ? Param::iterator
+                                                                       : Param::other);
+  if (!algorithm.empty()) {
+    q.name = algorithm;
   } else if (const auto* md = dyn_cast<CXXMethodDecl>(fd); md != nullptr && md->isInstance()) {
     const CXXRecordDecl* rd = md->getParent();
     if (isGslPointer(rd)) q.category = LoanSummaries::Category::pointer;

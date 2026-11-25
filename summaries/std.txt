@@ -82,6 +82,32 @@ free find_end find_first_of search mismatch : access interval(0,1) interval(2,3)
 free lower_bound upper_bound partition_point min_element max_element : access interval(0,1)
 free is_sorted_until is_heap_until : access interval(0,1)
 
+# --- Intervallformer av std::ranges-algoritmerna (STN-87) ------------------
+# [algorithms.requirements]: en överlagring med intervallargument gör som den
+# med iterator och sentinel, med ranges::begin(r) och ranges::end(r) för varje
+# intervall r. Ett intervall är alltså ett eget (first, last): andra iterator-
+# argument som kan peka in i det avvisas när funktionen kan skriva
+# (ranges::copy(s, s.begin() + 1)). Raderna ovan och nedan utan `range` i
+# formen gäller inte intervallformen (inte heller std::move(x):s identity).
+# [alg.find], [alg.search], [alg.binary.search], [alg.min.max],
+# [alg.partitions], [alg.sort]: resultatet är en position (eller ett delintervall)
+# i det första intervallet.
+free find(range,...) find_if(range,...) find_if_not(range,...) adjacent_find(range,...) search_n(range,...) : access
+free lower_bound(range,...) upper_bound(range,...) equal_range(range,...) partition_point(range,...) : access
+free min_element(range,...) max_element(range,...) is_sorted_until(range,...) is_heap_until(range,...) : access
+free find_end(range,range,...) find_first_of(range,range,...) search(range,range,...) : access
+# [alg.remove], [alg.unique]: resultatet är {i, last}, ett delintervall av r (STN-85).
+free remove(range,...) remove_if(range,...) unique(range,...) : default resultIn(0)
+# Bara roller; effekten är den försiktiga (default). [alg.sort], [alg.fill],
+# [alg.reverse], [alg.foreach], [alg.count], [alg.replace], [alg.all.of],
+# [alg.is.sorted], [alg.binary.search], [alg.copy], [alg.move], [alg.transform],
+# [alg.equal].
+free sort(range,...) stable_sort(range,...) fill(range,...) reverse(range,...) for_each(range,...) : default
+free count(range,...) count_if(range,...) replace(range,...) replace_if(range,...) : default
+free all_of(range,...) any_of(range,...) none_of(range,...) is_sorted(range,...) binary_search(range,...) : default
+free copy(range,...) copy_if(range,...) copy_backward(range,...) move(range,...) move_backward(range,...) : default
+free transform(range,...) transform(range,range,...) equal(range,range,...) : default
+
 # --- Argumentroller för övriga algoritmer (STN-77) --------------------------
 # interval(i,j): [first, last) i samma objekt ([iterator.requirements.general]:
 # [i, j) är ett giltigt intervall bara om j kan nås från i). Raderna ger bara

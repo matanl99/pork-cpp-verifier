@@ -682,6 +682,23 @@ whole row and an element of it), an element reached through a local
 reference and `std::array` (operator[] is a call) are the same place as
 before.
 
+STN-87  Range forms of std::ranges algorithms  [rejects]
+An argument of a std::ranges algorithm (a niebloid) whose type is an array
+or a class with begin() (a container or a view, also std::span and
+std::string_view) is a range, and the call is in range form. The rule for a
+range form in summaries/std.txt has `range` in its parameter shape
+(`copy(range,...)`); a line without it (the name alone, or a shape with only
+iterators) shall not apply to the range form, so `std::ranges::copy(r, out)`
+never gets the roles of `copy(first, last, out)` (`interval(0,1)` would make
+(r, out) a range) and `std::ranges::move(r, out)` never gets the `identity`
+of `std::move(x)`. A range is its own [first, last) ([algorithms.requirements]:
+the range overload behaves as the iterator overload with ranges::begin(r)
+and ranges::end(r)): another iterator argument that may point into it, where
+the function may write through one, is rejected as for STN-77
+(`std::ranges::copy(s, s.begin() + 1)` on a std::span s). A range form with
+no line gets the cautious default, and with two or more loan-bearing
+arguments it is rejected (STN-77).
+
 STN-79  Lambdas as arguments to std
 A lambda shall also be allowed directly as an argument of a call to a std
 function (`std::sort(b, e, [](const T& a, const T& b) { ... })`), or a local
