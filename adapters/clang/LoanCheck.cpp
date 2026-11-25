@@ -498,7 +498,9 @@ class LoanChecker {
 
   void fail(const Stmt* at, std::string why) {
     if (!checking_ || error_) return;
-    unsigned line = at ? sm_.getPresumedLoc(at->getBeginLoc()).getLine() : 0;
+    // Implicita noder (en arrayfyllare i `{}`) saknar plats: då ingen rad.
+    PresumedLoc loc = at ? sm_.getPresumedLoc(at->getBeginLoc()) : PresumedLoc();
+    unsigned line = loc.isValid() ? loc.getLine() : 0;
     error_ = why + (line ? " (line " + std::to_string(line) + ")" : "");
   }
 
@@ -1029,7 +1031,10 @@ class LoanChecker {
     }
     if (isa<CXXNullPtrLiteralExpr, IntegerLiteral, GNUNullExpr>(e)) return {};
     // T() / {} för en pekare: en nollpekare (`reset(pointer p = pointer())`).
-    if (isa<CXXScalarValueInitExpr, ImplicitValueInitExpr>(e) && e->getType()->isPointerType()) return {};
+    // Ett värdeinitierat aggregat eller en array (`int* v[2]` i `{}`) har
+    // bara nollpekare: inga lån.
+    if (isa<CXXScalarValueInitExpr>(e) && e->getType()->isPointerType()) return {};
+    if (isa<ImplicitValueInitExpr>(e)) return {};
     if (isa<SourceLocExpr, StringLiteral, PredefinedExpr>(e)) return {{{rootOf(e, Root::staticStorage), {}}, false}};
     if (!types_.loanBearing(e->getType())) return {};
     unsupported(e, "a loan-bearing value");
