@@ -96,7 +96,7 @@ type when T is (STN-4), also recursively (STN-63). A raw pointer in Stone is
 always a loan (there is no `new`), so a call that takes ownership of a raw
 pointer shall be rejected: a `std::unique_ptr` or `std::shared_ptr`
 constructor or `reset` with a pointer argument other than a null pointer,
-and `release`. A `std::unique_ptr<T>` constructor or assignment from a
+and `release` (except as in STN-90). A `std::unique_ptr<T>` constructor or assignment from a
 `std::unique_ptr<U>` where U is another type than T (ignoring cv) shall be
 rejected unless T has a virtual destructor: the owner later deletes the U
 object as a T ([expr.delete]/3). `std::make_unique` runs T's constructor (STN-67), destruction
@@ -537,7 +537,7 @@ pre/post on the declaration): `'I::f' has a contract in its definition and in
 the contract file`.
 
 STN-57  std::move
-`std::move(x)` shall be allowed where x is a path rooted in a local
+For `std::unique_ptr` see STN-90. `std::move(x)` shall be allowed where x is a path rooted in a local
 variable or value parameter (not a reference; for the source of a move
 constructor or assignment see STN-72) whose root is not used after
 the call (clang's LiveVariables over the function; a later assignment counts
@@ -738,6 +738,27 @@ reference bound to it (`auto& p = v[i]; if (p) ...`). The library facts are
 data in summaries/std.txt (`nonEmpty`, `resultNonEmpty`, `resultNullIfEmpty`,
 `keepsElements`, `insertsArguments`, `swaps`). Raw pointer parameters are not
 checked (a pointer in Stone is a loan, and Silver checks null dereferences).
+
+STN-90  Moving std::unique_ptr
+A `std::unique_ptr` is empty after it has been moved from
+([unique.ptr.single.ctor], [unique.ptr.single.asgn]: u.get() == nullptr),
+and STN-89 follows that state, so for an argument of type `std::unique_ptr`:
+  - `std::move(x)` shall be allowed for any path x (a field `o.r`, an
+    element `v[0]`, `v.front()`, a reference parameter), and x may be used
+    afterwards: `if (x)`, `x == nullptr`, `x.get()` and an assignment are
+    allowed, and `*x` or `x->` is rejected by STN-89 unless x is made
+    non-empty again;
+  - x shall not occur anywhere else in the same full-expression (as for
+    STN-57: the order of evaluation is unspecified).
+`std::unique_ptr<T> t{o.release()}` and `t.reset(o.release())` shall be
+allowed where o and t have the same type: the ownership passes directly, as
+in a move, and t is empty exactly where o was. Any other use of `release()`
+shall be rejected (STN-69). A std function given a value only reaches its
+own classes through user code (copying, comparison, a callable); through a
+`std::unique_ptr` it reaches only the pointer value and the destructor, which
+assumes nothing about *this. Such a call is therefore not assumed to
+dereference a `std::unique_ptr` it reaches (`v.erase(v.begin())` after
+moving `v[0]` out).
 
 STN-79  Lambdas as arguments to std
 A lambda shall also be allowed directly as an argument of a call to a std

@@ -91,6 +91,13 @@ const CallExpr* flowRequirement(const Stmt* s, bool* result) {
 
 
 namespace {
+// std::unique_ptr<T, D> (STN-69, STN-90).
+bool isUniquePtrType(QualType t) {
+  const auto* rd = dyn_cast_or_null<ClassTemplateSpecializationDecl>(
+      t.getNonReferenceType().getCanonicalType()->getAsCXXRecordDecl());
+  return rd != nullptr && rd->getSpecializedTemplate()->getQualifiedNameAsString() == "std::unique_ptr";
+}
+
 // STN-88: std-mallar med delat ägande (libstdc++ har baserna __shared_ptr och __weak_ptr).
 bool sharedOwnership(const std::string& tmpl) {
   return tmpl == "std::shared_ptr" || tmpl == "std::__shared_ptr" || tmpl == "std::weak_ptr" ||
@@ -1325,6 +1332,8 @@ class Checker {
   enum class Mode { value, constRef, mutRef };
 
   // Ett anrop uppdelat: funktion, ev. objekt (med läge) och argument.
+  std::set<const Expr*> handedOver_;  // o.release() direkt till en ny ägare (STN-90)
+
   struct CallParts {
     const FunctionDecl* callee = nullptr;
     const Expr* object = nullptr;
@@ -2544,6 +2553,16 @@ class Checker {
   // move är värdet giltigt men ospecificerat, och ingen får läsa det.
   Reason movedFrom(const Expr* call, const Expr* arg) {
     std::optional<Path> p = pathOf(arg);
+    // STN-90: en flyttad std::unique_ptr är tom ([unique.ptr.single.ctor],
+    // [unique.ptr.single.asgn]: u.get() == nullptr), och lånemodellen följer
+    // tomheten (STN-89). Vilken väg som helst får flyttas och användas efteråt;
+    // i samma fullständiga uttryck får ingen överlappande väg förekomma.
+    if (p && isUniquePtrType(arg->getType())) {
+      noteWrite(*p);
+      markWrite(arg);  // v[0], v.front(): skrivningen är flytten, som i `v[0] = x`
+      if (auto r = sameExpression(call, *p, true)) return r;
+      return expr(arg);
+    }
     const auto* root = p ? dyn_cast_or_null<VarDecl>(p->root) : nullptr;
     const auto* parm = dyn_cast_or_null<ParmVarDecl>(root);
     bool moveSource = parm != nullptr && TypeRules::isMoveSource(*parm);  // STN-72: rhs.x i T(T&& rhs)
@@ -2776,14 +2795,31 @@ class Checker {
     return std::nullopt;
   }
 
-  static Reason ownershipTransfer(const CallParts& c) {
+  // STN-90: `std::unique_ptr<T> t{o.release()}` och `t.reset(o.release())`
+  // lämnar över ägandet direkt, som en flytt: samma typ (pekare och
+  // deleter), och pekaren passerar ingen annanstans.
+  const CXXMemberCallExpr* handedOver(const CXXMethodDecl& md, const Expr* a) const {
+    const auto* rc = dyn_cast<CXXMemberCallExpr>(a->IgnoreParenImpCasts());
+    if (rc == nullptr || rc->getMethodDecl() == nullptr || rc->getMethodDecl()->getNameAsString() != "release")
+      return nullptr;
+    const CXXRecordDecl* from = rc->getMethodDecl()->getParent();
+    if (from->getQualifiedNameAsString() != "std::unique_ptr") return nullptr;
+    ASTContext& ctx = md.getASTContext();
+    if (!ctx.hasSameType(ctx.getCanonicalTagType(from), ctx.getCanonicalTagType(md.getParent()))) return nullptr;
+    return rc;
+  }
+
+  Reason ownershipTransfer(const CallParts& c) {
     const FunctionDecl& callee = *c.callee;
     const auto* md = dyn_cast<CXXMethodDecl>(&callee);
     if (md == nullptr || !callee.getASTContext().getSourceManager().isInSystemHeader(callee.getLocation()))
       return std::nullopt;
     std::string cls = md->getParent()->getQualifiedNameAsString();
     if (cls != "std::unique_ptr" && cls != "std::shared_ptr" && cls != "std::__shared_ptr") return std::nullopt;
-    if (md->getNameAsString() == "release") return "releases ownership to a raw pointer";
+    if (md->getNameAsString() == "release") {
+      if (c.call != nullptr && handedOver_.contains(stripNoOp(c.call))) return std::nullopt;
+      return "releases ownership to a raw pointer";
+    }
     if (cls == "std::unique_ptr" && (isa<CXXConstructorDecl>(md) || md->getOverloadedOperator() == OO_Equal))
       if (Reason r = convertingOwner(*md->getParent(), c.args)) return r;
     if (!isa<CXXConstructorDecl>(md) && md->getNameAsString() != "reset") return std::nullopt;
@@ -2793,6 +2829,11 @@ class Checker {
       if (const auto* d = dyn_cast<CXXDefaultArgExpr>(x)) x = d->getExpr()->IgnoreParenImpCasts();
       if (isa<CXXNullPtrLiteralExpr, GNUNullExpr, CXXScalarValueInitExpr, ImplicitValueInitExpr>(x)) continue;
       if (a->isNullPointerConstant(callee.getASTContext(), Expr::NPC_ValueDependentIsNotNull)) continue;
+      if (cls == "std::unique_ptr")
+        if (const CXXMemberCallExpr* rc = handedOver(*md, a)) {
+          handedOver_.insert(rc);
+          continue;
+        }
       return "takes ownership of a raw pointer";
     }
     return std::nullopt;
@@ -2894,7 +2935,13 @@ class Checker {
   }
 
   Reason callWith(const CallParts& c, bool effectHere) {
+    std::size_t before = handedOver_.size();
     if (auto r = ownershipTransfer(c)) return r;
+    // Överlämningen är en del av den nya ägarens sidoeffekt (som en flytt).
+    if (handedOver_.size() != before && effectHere)
+      for (const Expr* a : c.args)
+        if (const auto* md = dyn_cast<CXXMethodDecl>(c.callee))
+          if (const CXXMemberCallExpr* rc = a != nullptr ? handedOver(*md, a) : nullptr) effectGranted_.insert(rc);
     if (auto r = shallowConst(c)) return r;
     if (effectHere)
       if (const CallExpr* algorithm = eraseRemove(c)) effectGranted_.insert(algorithm);

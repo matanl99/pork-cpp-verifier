@@ -69,6 +69,8 @@ owner erase(iterator,iterator) : default range keepsElements
 # get() != nullptr; get() ger den lagrade pekaren (null när *this är tom).
 owner std::unique_ptr::operator* std::unique_ptr::operator-> : access nonEmpty
 owner std::unique_ptr::get : default resultNullIfEmpty
+# [unique.ptr.single.modifiers] release(): ger get() och gör den tom (STN-90).
+owner std::unique_ptr::release : default resultNullIfEmpty
 # [unique.ptr.single.modifiers] swap(u), [utility.swap] swap(a, b): byter innehåll.
 owner std::unique_ptr::swap : default swaps
 # [sequence.reqmts], [vector.modifiers], [deque.modifiers]: emplace_back(args)

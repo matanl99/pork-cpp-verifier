@@ -2064,6 +2064,17 @@ class LoanChecker {
 
   // En konstruktion av en typ som innehåller en unique_ptr (före anropets
   // effekter: källan till en flytt har kvar sitt tillstånd).
+  // Ett anrop som lämnar ut en unique_ptrs pekare och tömmer den (en icke-const
+  // metod med resultNullIfEmpty i std.txt: release): platsen där källans
+  // tillstånd sparas.
+  std::optional<Place> releaseKey(const Expr* e) {
+    const auto* mc = dyn_cast<CXXMemberCallExpr>(e->IgnoreParenImpCasts());
+    const CXXMethodDecl* md = mc != nullptr ? mc->getMethodDecl() : nullptr;
+    if (md == nullptr || md->isConst() || !libraryRuleImpl(ctx_.lib, md).resultNullIfEmpty) return std::nullopt;
+    if (!isUniquePtr(mc->getImplicitObjectArgument()->getType())) return std::nullopt;
+    return Place{rootOf(mc, Root::temporary), {}};
+  }
+
   void constructEmptiness(const CXXConstructExpr* c, State& s) {
     if (!containsUnique(c->getType())) return;
     Place t = tempPlace(c);
@@ -2075,6 +2086,10 @@ class LoanChecker {
           c->getArg(0)->isNullPointerConstant(fd_.getASTContext(), Expr::NPC_ValueDependentIsNotNull))
         return setEmpty(t, s);
       if (isUniquePtr(c->getArg(0)->getType())) return initFrom(t, c->getArg(0), s);
+      if (std::optional<Place> key = releaseKey(c->getArg(0))) {  // t{o.release()} (STN-90)
+        copyStates(t, *key, c->getType(), s);
+        return clearUnder(*key, s);
+      }
       return setEmpty(t, s);  // från en rå pekare (STN-69)
     }
     if (ctor->isCopyOrMoveConstructor() && c->getNumArgs() >= 1 && (!ctor->isUserProvided() || inStd(*ctor)))
@@ -2186,6 +2201,24 @@ class LoanChecker {
     if (own.exitOutsideEmpty) s.outsideEmpty = true;
   }
 
+  // Kan std-kod som får ett värde av typen `t` nå användarkod med det? Bara
+  // genom egna klasser i typen (deras kopiering, jämförelser, operator()).
+  // Genom en unique_ptr når std-kod bara pekarvärdet och destruktorn, och en
+  // destruktor antar ingenting om *this (STN-89).
+  bool userCodeIn(QualType t, unsigned depth = 0) {
+    t = t.getNonReferenceType().getCanonicalType();
+    while (t->isPointerType() || t->isArrayType())
+      t = t->isPointerType() ? t->getPointeeType() : QualType(t->getArrayElementTypeNoTypeQual(), 0);
+    if (isUniquePtr(t)) return false;
+    const CXXRecordDecl* rd = t->getAsCXXRecordDecl();
+    if (rd == nullptr) return false;
+    if (depth > 6 || !inStd(*rd)) return true;
+    if (const auto* sp = dyn_cast<ClassTemplateSpecializationDecl>(rd))
+      for (const TemplateArgument& a : sp->getTemplateArgs().asArray())
+        if (a.getKind() == TemplateArgument::Type && userCodeIn(a.getAsType(), depth + 1)) return true;
+    return false;
+  }
+
   // Anrop utan egen sammanfattning: allt som kan nås ska vara icke-tomt (den
   // anropade antar det), och det anropet kan ändra kan vara tomt efteråt.
   // std-kod avrefererar aldrig själv en unique_ptr den får; den kan anropa
@@ -2205,6 +2238,7 @@ class LoanChecker {
       if (stdCallee && (isUniquePtr(t) || t->isPointerType() || t->isNullPtrType() || observer)) continue;
       if (stdCallee && o.object && (rule.keepsElements || rule.insertsArguments) && isUniquePtr(elementType(t)))
         continue;
+      if (stdCallee && !userCodeIn(t)) continue;
       std::vector<Place> reached;
       if (loanBearing)
         for (const PlaceRef& r : heldByOperand(o, s)) reached.push_back(norm(r.place));
@@ -2415,6 +2449,18 @@ class LoanChecker {
         source = Place{rootOf(assign, Root::temporary), {}};
         initFrom(*source, assign->getArg(1), s);
       }
+      // release(): pekaren är null precis när källan var tom; tillståndet sparas
+      // före anropet (som tömmer källan) för den nya ägaren (STN-90).
+      if (std::optional<Place> key = releaseKey(c); key && ops.front().object) {
+        std::vector<Place> from = trackedPlaces(ops.front().e, s);
+        if (from.size() == 1) copyStates(*key, from.front(), ops.front().e->getType(), s);
+        else setEmpty(*key, s);
+      }
+      // reset(o.release()): den nya ägaren ärver källans tillstånd.
+      std::optional<Place> handed;
+      if (const auto* mc = dyn_cast<CXXMemberCallExpr>(c);
+          mc != nullptr && mc->getNumArgs() == 1 && isUniquePtr(mc->getImplicitObjectArgument()->getType()))
+        handed = releaseKey(mc->getArg(0));
       // swap: tillstånden byter plats ([unique.ptr.single.modifiers], [utility.swap]).
       std::vector<Place> swapped;
       std::vector<std::vector<Place>> swapTargets;
@@ -2447,6 +2493,13 @@ class LoanChecker {
           else if (anyEmpty(swapped[k], s)) setEmpty(t, s);
         }
         clearUnder(swapped[k], s);
+      }
+      if (handed) {
+        for (const Place& t : trackedPlaces(ops.front().e, s)) {
+          if (trackedPlaces(ops.front().e, s).size() == 1) copyStates(t, *handed, ops.front().e->getType(), s);
+          else if (anyEmpty(*handed, s)) setEmpty(t, s);
+        }
+        clearUnder(*handed, s);
       }
       resultEmptiness(c, lrule, own, s);
       // Tilldelning till en lånebärande lokal variabel: it = m.find(k). Till
