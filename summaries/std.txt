@@ -13,6 +13,12 @@ pointer operator* operator-> operator[] : access
 pointer operator++ operator-- operator+= operator-= operator= : self
 pointer operator== operator!= operator< operator> operator<= operator>= operator<=> : reads
 pointer <const> : reads
+# [container.reqmts]: iterator kan konverteras till const_iterator; den nya
+# iteratorn pekar dit argumentet pekar.
+pointer <ctor>(iterator) : identity
+# [span.cons]: en span ur ett intervall eller en array pekar på dess element
+# och ändrar inget.
+pointer std::span::span : access
 
 # --- Behållare och ägande typer ([[gsl::Owner]]) ---------------------------
 # Åtkomst lånar element (ägd lagring) utan att ändra behållaren.
@@ -34,14 +40,14 @@ owner operator== operator!= operator< operator> operator<= operator>= operator<=
 # Insättning med en position: positionen pekar in i behållaren per definition
 # ([sequence.reqmts] a.insert(p, t), a.emplace(p, args)). Bara första
 # argumentet: i a.insert(p, i, j) får i och j inte peka in i a.
-owner insert(iterator,...) emplace(iterator,...) : default position copies insertsArguments
+owner insert(iterator,...) emplace(iterator,...) : default position copies insertsArguments keepsValues
 
 # Värdet som kopieras in får vara ett element i behållaren: [sequence.reqmts]
 # har inget sådant förvillkor för push_back(t), insert(p, t), insert(p, n, t)
 # eller resize(n, t) (LWG 526), till skillnad från a.assign(n, t), där t inte
 # får referera in i a. Gäller bara const T&-parametrar (inte T&&,
 # [res.on.arguments], och inte emplace_back(args&&...)).
-owner push_back push_front : default copies insertsArguments
+owner push_back push_front : default copies insertsArguments keepsValues
 owner resize : default copies
 
 # [associative.reqmts.general]/[list.modifiers]: insättning ogiltigförklarar
@@ -77,8 +83,12 @@ owner std::unique_ptr::swap : default swaps
 # konstruerar elementet ur args (utan args värdeinitierat: en tom unique_ptr);
 # pop_back, pop_front och clear tar bort element, reserve och shrink_to_fit
 # flyttar dem ([unique.ptr.single.ctor]: en flytt behåller pekaren).
-owner emplace_back emplace_front : default insertsArguments
-owner pop_back pop_front clear reserve shrink_to_fit : default keepsElements
+# keepsValues (STN-91): insättning och omallokering behåller de befintliga
+# elementens värden ([sequence.reqmts]: sekvensen är densamma med de nya
+# elementen); de flyttas, och det en unique_ptr äger lever.
+owner emplace_back emplace_front : default insertsArguments keepsValues
+owner pop_back pop_front clear : default keepsElements
+owner reserve shrink_to_fit : default keepsElements keepsValues
 
 # --- Fria funktioner (även std::ranges-algoritmer) -------------------------
 free operator== operator!= operator< operator> operator<= operator>= operator<=> : reads

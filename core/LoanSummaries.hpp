@@ -22,7 +22,8 @@ namespace pork {
 //             pointer  metod på en std-typ märkt [[gsl::Pointer]] (iteratorer, vyer)
 //             free     fri std-funktion, eller std::ranges-algoritm (niebloid)
 //   namn      metodens namn (`find`, `operator[]`, `conversion` = operator bool
-//             o.d., `<const>` = varje const-metod utan egen regel), eller
+//             o.d., `<const>` = varje const-metod utan egen regel, `<ctor>` =
+//             en konstruktor utan egen regel), eller
 //             kvalificerat för en enskild mall: `std::map::operator[]`.
 //             Parametrarnas form efter namnet, utan blanksteg:
 //               (iterator)           en parameter, en iterator
@@ -64,6 +65,8 @@ namespace pork {
 //             insertsArguments  nya element konstrueras ur argumenten, befintliga
 //                       behålls (push_back); utan argument är det nya elementet tomt
 //             swaps     de två operanderna byter innehåll (swap)
+//             keepsValues  befintliga element behåller sina värden; de kan
+//                       flyttas till ny lagring men förstörs inte
 //             interval(i,j)  parameter i och j (räknat från 0, utan objektet)
 //                       är ett intervall [first, last): båda pekar in i
 //                       samma objekt och får överlappa. Andra iterator-
@@ -96,7 +99,8 @@ struct LoanRule {
   bool resultNullIfEmpty = false;
   bool keepsElements = false;
   bool insertsArguments = false;
-  bool swaps = false;  // objektet och argumentet (eller de två argumenten) byter innehåll
+  bool swaps = false;
+  bool keepsValues = false;  // befintliga element behåller sina värden (kan flyttas till ny lagring)  // objektet och argumentet (eller de två argumenten) byter innehåll
 };
 
 class LoanSummaries {
@@ -123,6 +127,7 @@ class LoanSummaries {
     std::string name;
     std::vector<Param> params;
     bool isConst = false;
+    bool isConstructor = false;
   };
 
   // Mest specifik först: kvalificerat namn före namn före `<const>`, och

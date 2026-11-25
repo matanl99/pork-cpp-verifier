@@ -760,6 +760,19 @@ assumes nothing about *this. Such a call is therefore not assumed to
 dereference a `std::unique_ptr` it reaches (`v.erase(v.begin())` after
 moving `v[0]` out).
 
+STN-91  Borrows through owning elements
+A loan of what a `std::unique_ptr` element owns (`R& b = *v[0];`) shall stay
+valid across a std call whose row in summaries/std.txt says `keepsValues`
+(push_back, emplace_back, insert, emplace, reserve, shrink_to_fit): the
+existing elements keep their values ([sequence.reqmts]), and a move keeps the
+pointer ([unique.ptr.single.ctor]), so nothing they own is destroyed. A loan
+of the element itself (`auto& p = v[0];`) ends, as does a loan of anything
+through a call that destroys or replaces an element (erase, clear, pop_back,
+resize, `v[0] = ...`, `v[0].reset()`) or a call of a user function that
+changes the container (its summary says that it changes it, not how). Where
+the loan model cannot tell that a loan lies below the element (a field of
+the owned object, `int& x = v[0]->value;`), the loan ends.
+
 STN-79  Lambdas as arguments to std
 A lambda shall also be allowed directly as an argument of a call to a std
 function (`std::sort(b, e, [](const T& a, const T& b) { ... })`), or a local

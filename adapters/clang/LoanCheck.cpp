@@ -106,13 +106,22 @@ bool overlap(const Place& a, const Place& b) {
   return true;
 }
 
+constexpr unsigned char kMaxExtra = 3;
+
 // G2: en ändring av `changed` gör lånet av `loan` ogiltigt om lånet ligger i
-// ägd lagring under den ändrade platsen.
+// ägd lagring under den ändrade platsen: en [*] i lånet på ett djup större än
+// den ändrade platsens. `extra` (hopslagna nivåer) står för fler [*] efter
+// någon [*] i vägen, oftast den sista (*v[0] är v[*] extra 1, v[0]->value är
+// v[*].value extra 1, alltså v[*][*].value). Här räknas de så djupt som
+// möjligt, så att osäkerheten ger en ogiltigförklaring; ett mättat extra
+// (kMaxExtra) kan vara hur många som helst.
 bool invalidates(const Place& changed, const Place& loan) {
-  if (!overlap(changed, loan) || loan.path.size() <= changed.path.size()) return false;
-  for (std::size_t i = changed.path.size(); i < loan.path.size(); ++i)
-    if (loan.path[i] == nullptr) return true;
-  return false;
+  if (!overlap(changed, loan)) return false;
+  auto last = std::find(loan.path.rbegin(), loan.path.rend(), nullptr);
+  if (last == loan.path.rend()) return false;
+  std::size_t lastNull = static_cast<std::size_t>(loan.path.rend() - last) - 1;
+  if (loan.extra >= kMaxExtra) return true;
+  return lastNull + loan.extra >= changed.path.size() + changed.extra;
 }
 
 // Platsen dör: alla lån av den eller av något i den.
@@ -124,8 +133,6 @@ bool ends(const Place& dead, const Place& loan) {
 // redan ägd lagring (m[0] i en vector<vector<int>>) är det en ny nivå som
 // slås ihop (merged). Annars pekar p redan in i lagringen (en iterator, en
 // span, en pekare) och resultatet är samma nivå (*it, it + 1, s.begin()).
-constexpr unsigned char kMaxExtra = 3;
-
 Place opened(Place p, bool nested = true) {
   if (p.path.empty() || p.path.back() != nullptr) p.path.push_back(nullptr);
   else if (nested && p.extra < kMaxExtra) ++p.extra;
@@ -303,6 +310,7 @@ LoanRule libraryRuleImpl(const LoanSummaries& lib, const FunctionDecl* fd) {
     q.name = isa<CXXConversionDecl>(md) ? "conversion" : md->getNameAsString();
     q.qualified = trustName(*md);
     q.isConst = md->isConst();
+    q.isConstructor = isa<CXXConstructorDecl>(md);
   } else {
     q.name = fd->getNameAsString();
     q.qualified = trustName(*fd);
@@ -680,8 +688,25 @@ class LoanChecker {
     }
   }
 
-  // G2: platsen ändras.
-  void change(const Place& p, const Stmt* at, const State& s) {
+  // Ett lån i det ett element äger (två nivåer ägd lagring under `p`:
+  // v[*][*], det en unique_ptr i v pekar på).
+  // `p` är behållaren (v) eller dess element (v[*], genom en iterator). Här
+  // ska lånet säkert ligga under elementet (osäkerheten ger ett lån som inte
+  // överlever): lånet når elementet utan tidigare [*], och nästa steg är en
+  // [*] till eller en hopslagen nivå.
+  static bool belowElement(const Place& p, const Place& loan) {
+    Place element = !p.path.empty() && p.path.back() == nullptr ? p : opened(p);
+    std::size_t n = element.path.size();
+    if (element.extra != 0 || !overlap(element, loan) || loan.path.size() < n || loan.path[n - 1] != nullptr)
+      return false;
+    for (std::size_t i = 0; i + 1 < n; ++i)
+      if (loan.path[i] == nullptr) return false;
+    return loan.path.size() > n ? loan.path[n] == nullptr : loan.extra >= 1;
+  }
+
+  // G2: platsen ändras. `keepsPointees`: elementen (unique_ptr) behåller sina
+  // värden och kan bara flyttas till ny lagring (STN-91), så det de äger lever.
+  void change(const Place& p, const Stmt* at, const State& s, bool keepsPointees = false) {
     if (checking_) recordWrite(p);
     if (!checking_ || error_) return;
     for (const VarDecl* v : liveAt(at, s)) {
@@ -689,7 +714,8 @@ class LoanChecker {
       auto st = s.find(v);
       if (st == s.end()) continue;
       for (int id : st->second)
-        if (mayInvalidate(p, loans_[id].place))
+        if (mayInvalidate(p, loans_[id].place) &&
+            !(keepsPointees && loans_[id].place.root == p.root && belowElement(p, loans_[id].place)))
           return fail(at, "changes '" + text(p) + "' while " + name(v) + " borrows '" +
                               text(loans_[id].place) + "' and is used later");
     }
@@ -1631,12 +1657,24 @@ class LoanChecker {
       for (const auto& c : ownChanges) change(c, call, s);
       for (const Place& p : own->absoluteWrites) change(p, call, s);
     } else {
-      for (const Reach& w : refs)
-        if (w.written && !w.loanSet && w.invalidates) change(w.places, call, s);
+      for (const Reach& w : refs) {
+        if (!w.written || w.loanSet || !w.invalidates) continue;
+        const Operand& o = ops[w.operand];
+        QualType t = o.object && o.e->getType()->isPointerType() ? o.e->getType()->getPointeeType()
+                                                                  : o.e->getType().getNonReferenceType();
+        bool keeps = fd != nullptr && (inStd(*fd) || sm_.isInSystemHeader(fd->getLocation())) && o.object && rule.keepsValues && isUniquePtr(elementType(t));
+        for (const PlaceRef& r : w.places) change(r.place, call, s, keeps);
+      }
       if (effect == Effect::standard) storedByCall(ops, md, call, s);
     }
     if (port && effect == Effect::standard) changeOutside(call, s, fd ? fd->getQualifiedNameAsString() : "?");
-    change(through, call, s);
+    // insert(p, x): skrivningen genom positionen flyttar också bara elementen.
+    bool keepsThrough = own == nullptr && fd != nullptr && (inStd(*fd) || sm_.isInSystemHeader(fd->getLocation())) &&
+                        rule.keepsValues && !ops.empty() && ops.front().object &&
+                        isUniquePtr(elementType(ops.front().e->getType()->isPointerType()
+                                                    ? ops.front().e->getType()->getPointeeType()
+                                                    : ops.front().e->getType().getNonReferenceType()));
+    for (const PlaceRef& r : through) change(r.place, call, s, keepsThrough);
   }
 
   // Ett anrop utan sammanfattning kan lagra lån i ett lånebärande objekt som det
