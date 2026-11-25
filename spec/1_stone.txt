@@ -679,8 +679,8 @@ indices are, so the loan model's places keep `[*]` for every index. An index
 outside the array is undefined behaviour that Silver shall find, not the
 loan model. A variable index, the same constant index, a different form (a
 whole row and an element of it), an element reached through a local
-reference and `std::array` (operator[] is a call) are the same place as
-before.
+reference and `std::array` (operator[] is a call) are the same place
+(`values[*]`).
 
 STN-87  Range forms of std::ranges algorithms  [rejects]
 An argument of a std::ranges algorithm (a niebloid) whose type is an array

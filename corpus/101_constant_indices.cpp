@@ -1,6 +1,6 @@
 // Konstanta index i ägda arrayer (STN-86): values[0] och values[1] är skilda
 // element vid anrop (G3). Ett variabelt index, samma index, en annan form eller
-// std::array är som förut samma plats values[*].
+// std::array är samma plats values[*].
 #include <array>
 
 // rules: STN-86
