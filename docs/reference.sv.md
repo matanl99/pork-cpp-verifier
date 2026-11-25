@@ -837,6 +837,28 @@ två luckor i tillåtelselistan (STN-64 `static_assert`, STN-65 mallparametrar).
 `RegEx` (`std::vector<RegEx>`, 54 funktioner) skulle bli Stone om rekursiva värdetyper
 godtogs (koinduktivt) i stället för att avvisas.
 
+Reglerna STN-87–93 (intervallformer av `std::ranges`-algoritmerna, delat ägande, tomma och
+flyttade `std::unique_ptr`, lån genom ägande element, lån lagrade i objekt) ändrar inte antalet
+i repona; varje regel mättes före och efter med samma trust-fil (std-behållare, `std::string`
+och `std::unique_ptr` betrodda): tinyxml2 4 / 444, fmt 227 / 1144, leveldb 56 / 902, yaml-cpp
+230 / 1096, rugby 56 / 74. Ingen funktion förlorade Stone.
+
+Tider med 8 jobb, alla översättningsenheter på en gång, Debug-bygge mot Release-bygge
+(`cmake --preset release`, `build/release/pork`). Domarna och `--flow`-utdata är desamma i
+båda byggena.
+
+| Repo | Stone, Debug | Stone, Release | `--flow`, Debug | `--flow`, Release |
+|---|---|---|---|---|
+| tinyxml2 | 0,45 s | 0,10 s | 0,70 s | 0,14 s |
+| fmt | 2,08 s | 0,85 s | 2,70 s | 0,95 s |
+| leveldb | 2,87 s | 1,60 s | 2,96 s | 1,60 s |
+| yaml-cpp | 2,69 s | 1,33 s | 4,41 s | 1,62 s |
+| rugby (`src/core/*.cpp`) | 3,22 s | 1,49 s | 3,19 s | 1,48 s |
+
+Release är 2–4 gånger snabbare; resten är clangs parsning av headers, som är optimerad i båda.
+En enda funktion på 5000 rader tar 0,67 s (Debug) och 0,11 s (Release) för Stone, men 15,1 s
+och 3,1 s med `--flow`: där är `--flow` fortfarande långsam.
+
 ## Mätning mot riktig kod: rugby (`src/core/*.cpp`)
 
 rugby är ett eget 2D-rugbyspel i C++23 med en deterministisk kärna. Det används
