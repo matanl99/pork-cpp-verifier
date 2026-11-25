@@ -813,7 +813,9 @@ enda not-stone i repona: där finns inga nästlade behållare med iteratorpar. S
 tinyxml2 4 → 4, fmt 203 → 225 (uppslagstabeller som `digits2`, `compute_pow10`, lokala
 `constexpr`-arrayer, strängliteraler som `const char (&)[N]`), leveldb 45 → 46
 (`Random::Next`: `static const uint32_t M`), yaml-cpp 213 → 215, rugby 56 / 74 oförändrat.
-Ingen funktion förlorade Stone. Structured bindings (STN-84) ändrar inget i repona.
+Ingen funktion förlorade Stone. Structured bindings (STN-84) ändrar inget i repona, inte heller
+erase-remove-idiomet (STN-85) eller konstanta index i ägda arrayer (STN-86): tinyxml2 4, fmt 225,
+leveldb 46, yaml-cpp 215, rugby 56, och idiomen förekommer inte i den analyserade koden.
 
 Konstruktorerna var första orsaken i alla repon, men gav bara +5 till +27: själva
 konstruktorerna går nu igenom (delreglerna i STN-66 stoppar 2 i fmt), och det som stoppar dem
