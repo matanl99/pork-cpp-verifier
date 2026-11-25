@@ -1066,7 +1066,7 @@ class LoanChecker {
   // variabel eller *this) och på någon nivå två heltalskonstanta index som
   // skiljer sig. Ett index utanför arrayen är UB som Silver ska fånga, inte
   // lånemodellen. Allt annat (ett variabelt index, en referens, std::array) är
-  // som förut: samma plats.
+  // samma plats.
   bool distinctElements(const Expr* a, const Expr* b) const {
     const ASTContext& ctx = fd_.getASTContext();
     bool differ = false;
