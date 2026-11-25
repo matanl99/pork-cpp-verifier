@@ -644,6 +644,21 @@ free function here, as in the loan model. The same
 holds for a std free function on the container that summaries/std.txt says
 only reads (`std::begin(v)`, [iterator.range]: it returns v.begin()).
 
+STN-85  The erase-remove idiom
+`c.erase(A(c.begin(), c.end(), ...), c.end());` where A is std::remove,
+std::remove_if or std::unique shall be allowed where the erase call may have
+a side effect (STN-21): A then may have one too, as if it were a statement
+before the erase. c shall be the same known path in all four places
+(cbegin/cend count as begin/end), with no iterator arithmetic. A changes only
+elements in [c.begin(), c.end()) and never the size of c ([alg.remove],
+[alg.unique]), so c.end() is the same iterator in whatever order the
+arguments are evaluated. Its result is a position in that range
+(`resultIn(0)` in summaries/std.txt), so it is a position into c for erase
+(STN-74). Everything else is checked as usual: the loan model sees both
+calls (STN-62), and the predicate is a lambda argument (STN-79). Another
+algorithm, another container in any of the places, `c.begin() + n`, or the
+idiom inside a larger expression shall still be rejected.
+
 STN-79  Lambdas as arguments to std
 A lambda shall also be allowed directly as an argument of a call to a std
 function (`std::sort(b, e, [](const T& a, const T& b) { ... })`), or a local

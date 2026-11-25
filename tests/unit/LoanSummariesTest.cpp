@@ -106,19 +106,34 @@ TEST(LoanSummariesTest, Intervals) {
   EXPECT_EQ(r->intervals, (std::vector<std::pair<unsigned, unsigned>>{{0, 1}, {1, 2}, {0, 2}}));
 }
 
+TEST(LoanSummariesTest, ResultIn) {
+  // [alg.remove]: resultatet är en position i intervallet (STN-85).
+  auto r = builtin().find({LoanSummaries::Category::free, "std::remove_if", "remove_if", {true, true, false}});
+  ASSERT_TRUE(r.has_value());
+  EXPECT_EQ(r->resultIn, std::optional<unsigned>(0));
+  auto sort = builtin().find({LoanSummaries::Category::free, "std::sort", "sort", {true, true}});
+  ASSERT_TRUE(sort.has_value());
+  EXPECT_FALSE(sort->resultIn.has_value());
+  LoanSummaries s;
+  EXPECT_EQ(s.parse("free f : default resultIn(x)\n", "f").error(),
+            "f:1: unknown modifier 'resultIn(x)' (position, range, consumes, forwards, copies, interval(i,j) with i < j, resultIn(i))");
+  EXPECT_EQ(s.parse("free f : default resultIn(1)y\n", "f").error(),
+            "f:1: unknown modifier 'resultIn(1)y' (position, range, consumes, forwards, copies, interval(i,j) with i < j, resultIn(i))");
+}
+
 TEST(LoanSummariesTest, Errors) {
   LoanSummaries s;
   EXPECT_EQ(s.parse("owner size reads\n", "f").error(), "f:1: missing ':' before the effect");
   EXPECT_EQ(s.parse("tree size : reads\n", "f").error(), "f:1: unknown category 'tree' (owner, pointer, free)");
   EXPECT_EQ(s.parse("owner size : read\n", "f").error(), "f:1: unknown effect 'read'");
   EXPECT_EQ(s.parse("owner size : reads fast\n", "f").error(),
-            "f:1: unknown modifier 'fast' (position, range, consumes, forwards, copies, interval(i,j) with i < j)");
+            "f:1: unknown modifier 'fast' (position, range, consumes, forwards, copies, interval(i,j) with i < j, resultIn(i))");
   EXPECT_EQ(s.parse("free sort : default interval(1,0)\n", "f").error(),
-            "f:1: unknown modifier 'interval(1,0)' (position, range, consumes, forwards, copies, interval(i,j) with i < j)");
+            "f:1: unknown modifier 'interval(1,0)' (position, range, consumes, forwards, copies, interval(i,j) with i < j, resultIn(i))");
   EXPECT_EQ(s.parse("free sort : default interval(0, 1)\n", "f").error(),
-            "f:1: unknown modifier 'interval(0,' (position, range, consumes, forwards, copies, interval(i,j) with i < j)");
+            "f:1: unknown modifier 'interval(0,' (position, range, consumes, forwards, copies, interval(i,j) with i < j, resultIn(i))");
   EXPECT_EQ(s.parse("free sort : default interval(0,1)x\n", "f").error(),
-            "f:1: unknown modifier 'interval(0,1)x' (position, range, consumes, forwards, copies, interval(i,j) with i < j)");
+            "f:1: unknown modifier 'interval(0,1)x' (position, range, consumes, forwards, copies, interval(i,j) with i < j, resultIn(i))");
   EXPECT_EQ(s.parse("# c\nowner size size : reads\n", "f").error(), "f:2: 'size' is listed twice for owner");
   EXPECT_EQ(s.parse("owner erase(key) : reads\n", "f").error(),
             "f:1: unknown parameter shape in 'erase(key)' (iterator, ..., ending with '...')");

@@ -101,7 +101,7 @@ std::expected<void, std::string> LoanSummaries::parse(std::string_view text, con
     if (colon + 1 == w.end()) return fail("no effect after ':'");
     auto eff = effects.find(*(colon + 1));
     if (eff == effects.end()) return fail("unknown effect '" + *(colon + 1) + "'");
-    LoanRule rule{eff->second, false, false, false, false, where, {}};
+    LoanRule rule{eff->second, false, false, false, false, where, {}, false, std::nullopt};
     for (auto m = colon + 2; m != w.end(); ++m) {
       if (*m == "position") rule.position = true;
       else if (*m == "range") rule.range = true;
@@ -111,7 +111,11 @@ std::expected<void, std::string> LoanSummaries::parse(std::string_view text, con
       else if (unsigned i = 0, j = 0; std::sscanf(m->c_str(), "interval(%u,%u)", &i, &j) == 2 &&
                                       *m == "interval(" + std::to_string(i) + "," + std::to_string(j) + ")" && i < j)
         rule.intervals.emplace_back(i, j);
-      else return fail("unknown modifier '" + *m + "' (position, range, consumes, forwards, copies, interval(i,j) with i < j)");
+      else if (unsigned i = 0; std::sscanf(m->c_str(), "resultIn(%u)", &i) == 1 &&
+                               *m == "resultIn(" + std::to_string(i) + ")")
+        rule.resultIn = i;
+      else return fail("unknown modifier '" + *m +
+                       "' (position, range, consumes, forwards, copies, interval(i,j) with i < j, resultIn(i))");
     }
     for (auto n = w.begin() + 1; n != colon; ++n) {
       auto split = splitShape(*n);

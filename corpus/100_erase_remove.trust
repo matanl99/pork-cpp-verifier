@@ -1,0 +1,9 @@
+type std::allocator
+std::allocator::*
+type std::vector
+std::vector::*
+std::sort
+std::remove
+std::remove_if
+std::unique
+std::find

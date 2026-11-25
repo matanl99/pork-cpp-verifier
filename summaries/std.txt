@@ -91,7 +91,10 @@ free is_sorted_until is_heap_until : access interval(0,1)
 # [alg.replace], [alg.remove], [alg.unique], [alg.all.of], [alg.is.sorted],
 # [numeric.iota], [accumulate], [iterator.operations] (distance).
 free sort stable_sort fill reverse for_each count count_if replace replace_if : default interval(0,1)
-free remove remove_if unique iota all_of any_of none_of is_sorted accumulate distance : default interval(0,1)
+free iota all_of any_of none_of is_sorted accumulate distance : default interval(0,1)
+# [alg.remove], [alg.unique]: "Returns: The end of the resulting range", en position i
+# [first, last]. Storleken på behållaren ändras inte (STN-85, erase-remove).
+free remove remove_if unique : default interval(0,1) resultIn(0)
 # [alg.copy], [alg.move], [alg.transform]: result ligger inte i [first, last).
 free copy copy_if copy_backward move_backward transform : default interval(0,1)
 # [alg.transform] ranges::transform(first1, last1, first2, last2, result, op):

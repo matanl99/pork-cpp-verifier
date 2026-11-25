@@ -52,6 +52,9 @@ namespace pork {
 //                       objektet (v.push_back(v[0]), [res.on.arguments] och
 //                       LWG 526; inte assign(n, t), som har förvillkoret att t
 //                       inte refererar in i a)
+//             resultIn(i)  resultatet är en position i det parameter i pekar
+//                       in i, och lånar inget annat ([alg.remove], [alg.unique]:
+//                       slutet på det nya intervallet). Bara för iteratorer.
 //             interval(i,j)  parameter i och j (räknat från 0, utan objektet)
 //                       är ett intervall [first, last): båda pekar in i
 //                       samma objekt och får överlappa. Andra iterator-
@@ -75,6 +78,7 @@ struct LoanRule {
   // samma objekt (STN-77); i och j får överlappa varandra.
   std::vector<std::pair<unsigned, unsigned>> intervals;
   bool copies = false;
+  std::optional<unsigned> resultIn;  // resultIn(i): resultatet pekar dit parameter i pekar
 };
 
 class LoanSummaries {

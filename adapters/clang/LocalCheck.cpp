@@ -1864,6 +1864,7 @@ class Checker {
     // Får just den här noden vara ett anrop med sidoeffekt? Genomskinliga
     // omslag skickar rätten vidare (`pass`); alla andra deluttryck får den inte.
     bool effectHere = std::exchange(effectOk_, false);
+    if (effectGranted_.erase(e) != 0) effectHere = true;  // STN-85, se eraseRemove
     auto pass = [&](const Expr* sub) {
       effectOk_ = effectHere;
       return expr(sub);
@@ -2832,6 +2833,8 @@ class Checker {
   Reason callWith(const CallParts& c, bool effectHere) {
     if (auto r = ownershipTransfer(c)) return r;
     if (auto r = shallowConst(c)) return r;
+    if (effectHere)
+      if (const CallExpr* algorithm = eraseRemove(c)) effectGranted_.insert(algorithm);
     positionReads(c, effectHere);
     const FunctionDecl& callee = *c.callee;
     if (auto r = recordCallee(callee, c.dispatch)) return r;
@@ -2937,6 +2940,58 @@ class Checker {
       if (!isConstIterator(c.callee->getParamDecl(i)->getType())) continue;
       if (const Expr* call = iteratorSource(c.args[i])) readCalls_.insert(call);
     }
+  }
+
+  // STN-85: erase-remove-idiomet, `c.erase(ALG(c.begin(), c.end(), ...), c.end())`
+  // med ALG = std::remove, std::remove_if eller std::unique, samma kända väg c
+  // överallt och erase som får ha sidoeffekt. Algoritmen ändrar bara element i
+  // [c.begin(), c.end()), aldrig storleken, så c.end() är samma iterator vilken
+  // ordning argumenten än beräknas i. Den inre algoritmen får då samma rätt till
+  // sidoeffekt som erase; lånemodellen granskar båda anropen som vanligt.
+  const CallExpr* eraseRemove(const CallParts& c) const {
+    if (c.object == nullptr || c.arrow || c.args.size() != 2 || !inSystemHeader(*c.callee) ||
+        c.callee->getNameAsString() != "erase")
+      return nullptr;
+    const auto* algorithm = dyn_cast<CallExpr>(throughConversions(c.args[0]));
+    if (algorithm == nullptr || isa<CXXMemberCallExpr, CXXOperatorCallExpr>(algorithm) || algorithm->getNumArgs() < 2)
+      return nullptr;
+    const FunctionDecl* fd = algorithm->getDirectCallee();
+    if (fd == nullptr || isa<CXXMethodDecl>(fd) || !inSystemHeader(*fd)) return nullptr;
+    std::string name = fd->getQualifiedNameAsString();
+    if (name != "std::remove" && name != "std::remove_if" && name != "std::unique") return nullptr;
+    std::optional<Path> container = pathOf(c.object);
+    if (!container || container->open) return nullptr;
+    bool form = containerCall(algorithm->getArg(0), {"begin", "cbegin"}, *container) &&
+                containerCall(algorithm->getArg(1), {"end", "cend"}, *container) &&
+                containerCall(c.args[1], {"end", "cend"}, *container);
+    return form ? algorithm : nullptr;
+  }
+
+  // Genom implicita omslag och std-iteratorkonverteringar (iterator -> const_iterator).
+  static const Expr* throughConversions(const Expr* e) {
+    for (;;) {
+      e = e->IgnoreParenImpCasts();
+      if (const auto* w = dyn_cast<ExprWithCleanups>(e)) e = w->getSubExpr();
+      else if (const auto* m = dyn_cast<MaterializeTemporaryExpr>(e)) e = m->getSubExpr();
+      else if (const auto* b = dyn_cast<CXXBindTemporaryExpr>(e)) e = b->getSubExpr();
+      else if (const auto* ce = dyn_cast<CXXConstructExpr>(e);
+               ce != nullptr && ce->getNumArgs() == 1 && inSystemHeader(*ce->getConstructor()))
+        e = ce->getArg(0);
+      else
+        return e;
+    }
+  }
+
+  // `c.begin()` (ett av namnen) direkt på vägen c, utan aritmetik.
+  bool containerCall(const Expr* e, std::initializer_list<const char*> names, const Path& c) const {
+    const auto* mc = dyn_cast<CXXMemberCallExpr>(throughConversions(e));
+    if (mc == nullptr || mc->getNumArgs() != 0 || !inSystemHeader(*mc->getMethodDecl())) return false;
+    std::string name = mc->getMethodDecl()->getNameAsString();
+    if (std::none_of(names.begin(), names.end(), [&](const char* n) { return name == n; })) return false;
+    const auto* member = dyn_cast<MemberExpr>(mc->getCallee()->IgnoreParens());
+    if (member == nullptr || member->isArrow()) return false;
+    std::optional<Path> p = pathOf(mc->getImplicitObjectArgument());
+    return p && !p->open && p->root == c.root && p->fields == c.fields;
   }
 
   static bool isComparison(OverloadedOperatorKind k) {
@@ -3435,6 +3490,7 @@ class Checker {
   UserCodeScan userCode_{types_.context().getSourceManager()};  // STN-67
   const VarDecl* initializing_ = nullptr;  // variabeln vars initierare granskas just nu
   bool effectOk_ = false;                  // se expr()/effectAllowed()
+  std::set<const Expr*> effectGranted_;    // STN-85: inre anrop som får ha sidoeffekt (eraseRemove)
   std::map<const VarDecl*, Path> refs_;    // lokala referenser -> vad de är bundna till
   std::map<const BindingDecl*, Path> bindingPaths_;
   std::map<const Stmt*, std::set<const VarDecl*>> liveAfter_;  // se setLiveness

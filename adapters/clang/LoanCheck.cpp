@@ -1023,7 +1023,8 @@ class LoanChecker {
 
   std::vector<PlaceRef> callResult(const CallExpr* c, const State& s) {
     const FunctionDecl* fd = c->getDirectCallee();
-    Effect effect = libraryRuleImpl(ctx_.lib, fd).effect;
+    const LoanRule rule = libraryRuleImpl(ctx_.lib, fd);
+    Effect effect = rule.effect;
     std::vector<Operand> ops = operands(c, fd);
     if (const Summary* own = ownSummary(fd)) {
       std::vector<PlaceRef> out;
@@ -1040,6 +1041,12 @@ class LoanChecker {
       return out;
     }
     if (effect == Effect::identity) return ops.empty() ? std::vector<PlaceRef>{} : places(ops.front().e, s);
+    // resultIn(i): en position i det parameter i pekar in i (std::remove ger
+    // slutet på det nya intervallet), inget annat.
+    if (rule.resultIn && ownSummary(fd) == nullptr) {
+      const Operand* o = operandFor(ops, *rule.resultIn + 1);
+      if (o != nullptr && operandLoanBearing(*o) && !o->object) return values(o->e, s);
+    }
     // Resultatet pekar bara in i objektet (eller arg0): åtkomst, insättning
     // (iteratorn/referensen till det insatta elementet).
     bool onlyFirst = effect == Effect::access || effect == Effect::writeAccess || effect == Effect::insert;
