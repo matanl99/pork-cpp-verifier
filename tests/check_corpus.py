@@ -46,7 +46,8 @@ Sammanfattningar (lånemodellen): `<fall>.summaries` bredvid en fil, eller
 `summaries.txt` i en katalog, skickas som `--summaries` (ersätter rader i std.txt).
 
 Ett fall är antingen en .cpp- eller .c-fil (C: -std=c17) eller en katalog (alla i den körs i
-samma pork-anrop, för analys över flera översättningsenheter).
+samma pork-anrop, för analys över flera översättningsenheter). I en katalog läses
+förväntningar också i .hpp/.h (funktioner definierade i en header).
 
 Testet fallerar om
   - en förväntning saknar motsvarande rad i utdata,
@@ -175,7 +176,7 @@ def check_rules(corpus, spec):
         files = case_files(case)
         if not files:
             continue
-        for f, n, tags, verdict, detail, prover in rule_tags(files):
+        for f, n, tags, verdict, detail, prover in rule_tags([*files, *header_files(case)]):
             if prover is not None:
                 continue  # expect[esbmc]: samma fall som den vanliga raden
             if not tags:
@@ -258,6 +259,12 @@ def case_files(case):
     return [case] if is_case_file(case) else []
 
 
+def header_files(case):
+    """Headers i ett katalogfall: kompileras inte själva, men funktioner som
+    definieras i dem rapporteras på deras rader, så förväntningarna kan stå där."""
+    return sorted(f for f in case.iterdir() if f.suffix in (".hpp", ".h")) if case.is_dir() else []
+
+
 @cache
 def memory_cap():
     """Minnestak för bevisaren (cbmc/esbmc): utan det dödar oomd terminalen.
@@ -278,7 +285,7 @@ def run_case(pork, case, files, extra, prover):
     if "--silver" in extra:
         cmd = [*memory_cap(), *cmd]
     proc = subprocess.run(cmd, capture_output=True, text=True)
-    exp, violations = expectations(files, prover)
+    exp, violations = expectations([*files, *header_files(case)], prover)
     want_rc = 1 if violations else 0
     if proc.returncode != want_rc:
         return [f"pork exited {proc.returncode}, expected {want_rc}:\n{proc.stderr}"]

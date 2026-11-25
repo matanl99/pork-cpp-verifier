@@ -285,6 +285,16 @@ trusted (greatest fixpoint over the call graph, also across translation
 units). A call to a function without definition that is not trusted shall
 be rejected.
 
+STN-94  One definition per function  [rejects]
+A function defined in more than one translation unit (an inline function,
+a member function defined in its class or a template instantiation in a
+header) shall have one verdict, from its definition. Where the definitions
+differ after preprocessing (a macro defined before the `#include`, a
+different `-D` or `NDEBUG` per file; compared with clang's ODRHash), the
+program breaks the one definition rule ([basic.def.odr]) and the linker
+chooses one of them: the function shall be rejected, whichever order the
+translation units are given in, and so shall its callers (STN-23).
+
 STN-67  User code inside std
 A call to a function in a system header shall also be a call (STN-23) to
 every user-provided function that its instantiated body can run, followed

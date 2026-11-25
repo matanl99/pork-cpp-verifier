@@ -8,7 +8,9 @@ conditions, and what no level covers. How each guarantee is tested is in
 
 Levels are cumulative. A Silver function is also Bronze and Stone, and a
 Stone verdict means the function and everything it calls is Stone or
-trusted (STN-23).
+trusted (STN-23). A function defined in several translation units (an inline
+function in a header) gets one verdict; if the definitions differ after
+preprocessing it is rejected (STN-94).
 
 Legend:
 

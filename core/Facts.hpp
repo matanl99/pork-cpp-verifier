@@ -121,6 +121,9 @@ struct CFunction {
 // (se Classify.hpp), eftersom det beror på vad den anropar.
 struct FunctionFacts {
   std::string usr;   // Unified Symbol Resolution: samma nyckel i alla TU:er
+  // STN-94: definitionen efter preprocessorn (clangs ODRHash). Samma funktion
+  // (en inline-funktion i en header) ska ha samma definition i varje TU.
+  unsigned definitionHash = 0;
   std::string name;  // kvalificerat namn med templateargument, för utskrift
   std::string file;
   unsigned line = 0;

@@ -6,6 +6,7 @@
 #include "LocalCheck.hpp"
 
 #include <clang/AST/ASTConsumer.h>
+#include <clang/AST/ODRHash.h>
 #include <clang/AST/ParentMapContext.h>
 #include <clang/AST/RecursiveASTVisitor.h>
 #include <clang/Frontend/CompilerInstance.h>
@@ -63,6 +64,11 @@ class Visitor : public RecursiveASTVisitor<Visitor> {
     PresumedLoc p = sm.getPresumedLoc(loc);
     FunctionFacts f;
     f.usr = usr;
+    {
+      ODRHash h;
+      h.AddFunctionDecl(fd);
+      f.definitionHash = h.CalculateHash();
+    }
     f.name = displayName(*fd);
     f.file = p.getFilename();
     f.line = p.getLine();
@@ -294,8 +300,21 @@ std::expected<FactsMap, std::string> ClangFactsSource::collect() {
   // I filordning, första TU:n vinner (en inline-funktion i en header ses i
   // flera TU:er): samma resultat som en körning i en tråd.
   FactsMap facts;
-  for (FactsMap& m : perFile)
-    for (auto& [usr, f] : m) facts.try_emplace(usr, std::move(f));
+  std::map<std::string, std::size_t> firstFile;
+  for (std::size_t i = 0; i < perFile.size(); ++i)
+    for (auto& [usr, f] : perFile[i]) {
+      auto [it, added] = facts.try_emplace(usr, std::move(f));
+      if (added) {
+        firstFile[usr] = i;
+        continue;
+      }
+      // STN-94: en annan definition i en annan TU (ODR, [basic.def.odr]):
+      // vilken som körs avgör länkaren, så ingen av dem får ge domen.
+      FunctionFacts& kept = it->second;
+      if (kept.definitionHash != f.definitionHash && !kept.trusted && !f.trusted)
+        kept.local = "defined differently in the translation units " + files_[firstFile[usr]] + " and " + files_[i] +
+                     " (one definition rule)";
+    }
   // En header ses i flera TU:er (och en mall per instans): en gång per plats.
   // Sorterat: mönstret ("Tmpl::v") före instanserna ("Tmpl<int>::v").
   std::set<StrayRequirement> stray;
