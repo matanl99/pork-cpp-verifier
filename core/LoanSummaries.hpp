@@ -57,6 +57,13 @@ namespace pork {
 //             resultIn(i)  resultatet är en position i det parameter i pekar
 //                       in i, och lånar inget annat ([alg.remove], [alg.unique]:
 //                       slutet på det nya intervallet). Bara för iteratorer.
+//             nonEmpty  objektet får inte vara tomt (std::unique_ptr::operator*, STN-89)
+//             resultNonEmpty  resultatet är inte tomt (std::make_unique)
+//             resultNullIfEmpty  resultatet är en nullpekare om objektet är tomt (get)
+//             keepsElements  inga nya element och inga befintliga töms (erase, clear)
+//             insertsArguments  nya element konstrueras ur argumenten, befintliga
+//                       behålls (push_back); utan argument är det nya elementet tomt
+//             swaps     de två operanderna byter innehåll (swap)
 //             interval(i,j)  parameter i och j (räknat från 0, utan objektet)
 //                       är ett intervall [first, last): båda pekar in i
 //                       samma objekt och får överlappa. Andra iterator-
@@ -81,6 +88,15 @@ struct LoanRule {
   std::vector<std::pair<unsigned, unsigned>> intervals;
   bool copies = false;
   std::optional<unsigned> resultIn;  // resultIn(i): resultatet pekar dit parameter i pekar
+  // Tomhet (STN-89): objektet får inte vara tomt (`*p`), resultatet är inte tomt
+  // (make_unique), resultatet är null om objektet är tomt (get), befintliga
+  // element behålls (erase), nya element kommer ur argumenten (push_back).
+  bool nonEmpty = false;
+  bool resultNonEmpty = false;
+  bool resultNullIfEmpty = false;
+  bool keepsElements = false;
+  bool insertsArguments = false;
+  bool swaps = false;  // objektet och argumentet (eller de två argumenten) byter innehåll
 };
 
 class LoanSummaries {

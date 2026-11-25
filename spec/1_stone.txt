@@ -709,6 +709,36 @@ rule at calls (G3) and the loans per path (STN-62) assume they are not
 *b.v lives). A type argument that is a loan value does not make one
 (`std::shared_ptr<int*>`).
 
+STN-89  Empty std::unique_ptr  [rejects]
+`*p` and `p->` on a `std::unique_ptr` (and `*b`, `b->` on a local pointer
+from `p.get()` or `nullptr`) shall not be reached where p may be empty
+([unique.ptr.single.observers]: the precondition is get() != nullptr). The
+loan model (STN-62) follows, per place, whether it may be empty:
+  - `reset()`, `= nullptr`, a move from it (into a `T&&` or by-value
+    parameter, or a move assignment), default construction, construction from
+    `nullptr`, a value-initialised element (`v.emplace_back()`, `v.resize(n)`)
+    and a value-initialised field (`Owner o{}`) make it "may be empty";
+  - an assignment or construction from `std::make_unique` (or from a value
+    that is not empty), and a check (`if (p)`, `!p`, `p != nullptr`,
+    `p.get() == nullptr`, also through `&&`, `||` and `?:`) on the branch
+    where it holds, make it non-empty; `swap` exchanges the two states.
+Parameters and `*this` are assumed non-empty at entry, except in a constructor
+(the fields are not constructed yet) and a destructor (the object may have
+been moved from). What a function relies on becomes part of its summary, and
+the caller is checked against it, like the aliasing rule: passing a place that
+may be empty to a function in the same translation unit that dereferences it
+is rejected, and a place it leaves empty (`close(o)`) is empty in the caller
+afterwards. A call without a summary (another translation unit, trusted code)
+is assumed to dereference everything it can reach and to empty everything it
+can change; a std function only reaches what a container holds through user
+code, so a `std::unique_ptr` argument itself is not checked there. The
+elements of a container are one place (`v[*]`): a check of one element says
+nothing about another, so an element is made non-empty only through a
+reference bound to it (`auto& p = v[i]; if (p) ...`). The library facts are
+data in summaries/std.txt (`nonEmpty`, `resultNonEmpty`, `resultNullIfEmpty`,
+`keepsElements`, `insertsArguments`, `swaps`). Raw pointer parameters are not
+checked (a pointer in Stone is a loan, and Silver checks null dereferences).
+
 STN-79  Lambdas as arguments to std
 A lambda shall also be allowed directly as an argument of a call to a std
 function (`std::sort(b, e, [](const T& a, const T& b) { ... })`), or a local

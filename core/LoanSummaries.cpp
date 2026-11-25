@@ -113,6 +113,12 @@ std::expected<void, std::string> LoanSummaries::parse(std::string_view text, con
       else if (*m == "consumes") rule.consumes = true;
       else if (*m == "forwards") rule.forwards = true;
       else if (*m == "copies") rule.copies = true;
+      else if (*m == "nonEmpty") rule.nonEmpty = true;
+      else if (*m == "resultNonEmpty") rule.resultNonEmpty = true;
+      else if (*m == "resultNullIfEmpty") rule.resultNullIfEmpty = true;
+      else if (*m == "keepsElements") rule.keepsElements = true;
+      else if (*m == "insertsArguments") rule.insertsArguments = true;
+      else if (*m == "swaps") rule.swaps = true;
       else if (unsigned i = 0, j = 0; std::sscanf(m->c_str(), "interval(%u,%u)", &i, &j) == 2 &&
                                       *m == "interval(" + std::to_string(i) + "," + std::to_string(j) + ")" && i < j)
         rule.intervals.emplace_back(i, j);
@@ -120,7 +126,8 @@ std::expected<void, std::string> LoanSummaries::parse(std::string_view text, con
                                *m == "resultIn(" + std::to_string(i) + ")")
         rule.resultIn = i;
       else return fail("unknown modifier '" + *m +
-                       "' (position, range, consumes, forwards, copies, interval(i,j) with i < j, resultIn(i))");
+                       "' (position, range, consumes, forwards, copies, interval(i,j) with i < j, resultIn(i), "
+                       "nonEmpty, resultNonEmpty, resultNullIfEmpty, keepsElements, insertsArguments, swaps)");
     }
     for (auto n = w.begin() + 1; n != colon; ++n) {
       auto split = splitShape(*n);

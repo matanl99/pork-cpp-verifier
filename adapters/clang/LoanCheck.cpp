@@ -329,6 +329,13 @@ struct Summary {
     auto operator<=>(const Ret&) const = default;
   };
   std::set<Ret> returns;
+  // Tomhet (STN-89), vägar relativt platserna som i `writes`: antas inte tomma
+  // vid ingången (exakt platsen, eller allt under den), kan vara tomma eller är
+  // säkert inte tomma efteråt; absoluta platser för det referensfält når.
+  std::set<std::pair<unsigned, Path>> requiresFull, requiresAll, exitEmpty, exitFull;
+  std::set<Place> requiresFullAbs, requiresAllAbs, exitEmptyAbs;
+  bool exitOutsideEmpty = false;
+  bool returnsMaybeEmpty = false;
 };
 
 }  // namespace
@@ -371,7 +378,16 @@ std::map<const Stmt*, std::set<const VarDecl*>> liveAfter(AnalysisDeclContext& a
 
 // --- Kontrollen --------------------------------------------------------------
 
-using State = std::map<const VarDecl*, std::set<int>>;
+// Lånen per lokal variabel, och tomhet (STN-89): platser (std::unique_ptr, en
+// lokal pekare från get()) som kan vara tomma, där en plats också täcker allt
+// under sig, och platser som säkert inte är tomma (kontrollerade eller
+// tilldelade). `outsideEmpty`: det som nås genom referensfält kan vara tomt.
+struct State : std::map<const VarDecl*, std::set<int>> {
+  std::set<Place> empty;
+  std::set<Place> full;
+  bool outsideEmpty = false;
+  bool operator==(const State&) const = default;
+};
 
 class LoanChecker {
  public:
@@ -381,15 +397,27 @@ class LoanChecker {
 
   Reason run(const CFG& cfg, AnalysisDeclContext& ac) {
     State entry = parameters();
+    // STN-89: i en konstruktor är fälten inte konstruerade än, i en destruktor
+    // kan objektet vara flyttat från: inget i *this antas inte tomt.
+    if (isa<CXXConstructorDecl, CXXDestructorDecl>(&fd_)) entry.empty.insert(selfPlace());
     const auto* order = ac.getAnalysis<PostOrderCFGView>();
     std::map<const CFGBlock*, State> out;
     auto in = [&](const CFGBlock* b) {
       if (b == &cfg.getEntry()) return entry;
       State s;
+      bool first = true;
       for (const CFGBlock::AdjacentBlock& p : b->preds())
         if (const CFGBlock* pb = p.getReachableBlock())
-          if (auto it = out.find(pb); it != out.end())
-            for (const auto& [v, ids] : it->second) s[v].insert(ids.begin(), ids.end());
+          if (auto it = out.find(pb); it != out.end()) {
+            State e = it->second;
+            refine(e, *pb, *b);
+            for (const auto& [v, ids] : e) s[v].insert(ids.begin(), ids.end());
+            s.empty.insert(e.empty.begin(), e.empty.end());
+            s.outsideEmpty = s.outsideEmpty || e.outsideEmpty;
+            if (first) s.full = e.full;
+            else std::erase_if(s.full, [&](const Place& f) { return !e.full.contains(f); });
+            first = false;
+          }
       return s;
     };
     for (bool changed = true; changed;) {
@@ -410,6 +438,7 @@ class LoanChecker {
       block(*b, s);
       if (error_) break;
     }
+    if (!error_) recordExit(in(&cfg.getExit()));
     if (error_) record_.known = false;  // efter första felet saknas effekter
     return error_;
   }
@@ -1553,6 +1582,51 @@ class LoanChecker {
                                     (fd ? fd->getQualifiedNameAsString() : std::string("?")) +
                                     "' may be the same object and one is changed");
       }
+    // STN-89: det ett anrop utan egen sammanfattning kan ändra kan vara tomt
+    // efteråt; nya element i en behållare kommer ur argumenten.
+    if (own == nullptr && effect != Effect::identity) {
+      bool stdCallee = fd != nullptr && (inStd(*fd) || sm_.isInSystemHeader(fd->getLocation()));
+      bool anyWritten = false;
+      std::vector<Place> emptied;
+      for (const Reach& w : refs) {
+        if (!w.written) continue;
+        anyWritten = true;
+        if (w.loanSet) continue;
+        const Operand& o = ops[w.operand];
+        QualType t = o.object && o.e->getType()->isPointerType() ? o.e->getType()->getPointeeType()
+                                                                  : o.e->getType().getNonReferenceType();
+        if (!containsUnique(t)) continue;
+        if (o.object && (rule.keepsElements || rule.insertsArguments)) {
+          QualType el = elementType(t);
+          if (!rule.insertsArguments || el.isNull() || !containsUnique(el)) continue;
+          std::vector<const Operand*> args;
+          for (const Operand& a : ops)
+            if (!a.object && !operandLoanBearing(a)) args.push_back(&a);
+          bool newEmpty = args.empty();
+          if (!newEmpty && isUniquePtr(el)) {
+            for (const Operand* a : args) newEmpty = newEmpty || valueMaybeEmpty(a->e, s);
+          } else if (!newEmpty) {
+            newEmpty = args.size() != 1 ||
+                       !fd_.getASTContext().hasSameUnqualifiedType(args[0]->e->getType().getNonReferenceType(), el) ||
+                       valueMaybeEmpty(args[0]->e, s);
+          }
+          if (newEmpty)
+            for (const PlaceRef& r : w.places) emptied.push_back(opened(norm(r.place)));
+          continue;
+        }
+        for (const PlaceRef& r : w.places) emptied.push_back(norm(r.place));
+      }
+      for (const Reach& w : refs)
+        if (w.written && w.loanSet) {
+          const Operand& o = ops[w.operand];
+          QualType t = o.object && o.e->getType()->isPointerType() ? o.e->getType()->getPointeeType()
+                                                                    : o.e->getType().getNonReferenceType();
+          if (reachesUnique(t))
+            for (const PlaceRef& r : w.places) emptied.push_back(norm(r.place));
+        }
+      for (const Place& e : emptied) setEmpty(e, s);
+      if (anyWritten && !stdCallee) s.outsideEmpty = true;
+    }
     if (own != nullptr) {
       for (const auto& c : ownChanges) change(c, call, s);
       for (const Place& p : own->absoluteWrites) change(p, call, s);
@@ -1692,7 +1766,599 @@ class LoanChecker {
     }
   }
 
+  // --- Tomhet (STN-89) -------------------------------------------------------
+  //
+  // Platser av typen std::unique_ptr (och lokala pekare från get()) som kan
+  // vara tomma. Parametrar och *this antas inte tomma vid ingången; det
+  // funktionen förlitar sig på blir ett krav i sammanfattningen, som anroparen
+  // kontrolleras mot. Lokala variabler och temporärer är inte tomma om inget
+  // har gjort dem tomma (konstruktionen sätter tillståndet).
+
+  static bool isUniquePtr(QualType t) {
+    const auto* rd = dyn_cast_or_null<ClassTemplateSpecializationDecl>(
+        t.getNonReferenceType().getCanonicalType()->getAsCXXRecordDecl());
+    return rd != nullptr && rd->getSpecializedTemplate()->getQualifiedNameAsString() == "std::unique_ptr";
+  }
+
+  // Typen kan innehålla en unique_ptr som den äger (fält, baser, element i en
+  // std-behållare, det en unique_ptr äger).
+  bool containsUnique(QualType t) {
+    t = t.getNonReferenceType().getCanonicalType();
+    if (const auto* a = dyn_cast<ArrayType>(t.getTypePtr())) return containsUnique(a->getElementType());
+    const CXXRecordDecl* rd = t->getAsCXXRecordDecl();
+    if (rd == nullptr || !rd->hasDefinition()) return false;
+    rd = rd->getDefinition();
+    if (auto it = uniqueMemo_.find(rd); it != uniqueMemo_.end()) return it->second;
+    uniqueMemo_[rd] = false;  // rekursiva typer: antagandet
+    bool r = isUniquePtr(t);
+    if (const auto* spec = dyn_cast<ClassTemplateSpecializationDecl>(rd); spec != nullptr && inStd(*rd))
+      for (const TemplateArgument& a : spec->getTemplateArgs().asArray())
+        r = r || (a.getKind() == TemplateArgument::Type && !a.getAsType()->isPointerType() &&
+                  containsUnique(a.getAsType()));
+    if (!inStd(*rd)) {
+      for (const CXXBaseSpecifier& b : rd->bases()) r = r || containsUnique(b.getType());
+      for (const FieldDecl* f : rd->fields())
+        r = r || (!f->getType()->isReferenceType() && containsUnique(f->getType()));
+    }
+    return uniqueMemo_[rd] = r;
+  }
+
+  // Elementtypen i en std-behållare (första typargumentet).
+  static QualType elementType(QualType t) {
+    const auto* spec = dyn_cast_or_null<ClassTemplateSpecializationDecl>(
+        t.getNonReferenceType().getCanonicalType()->getAsCXXRecordDecl());
+    if (spec == nullptr || spec->getTemplateArgs().size() == 0 ||
+        spec->getTemplateArgs()[0].getKind() != TemplateArgument::Type)
+      return {};
+    return spec->getTemplateArgs()[0].getAsType();
+  }
+
+  Place selfPlace() const { return {rootOf(&fd_, Root::self), {}}; }
+
+  // Det ett lånebärande värde (pekare, iterator, vy, lambda) når kan innehålla
+  // en unique_ptr: pekarens mål, operator* i en iterator, elementtypen i en vy,
+  // det en lambda fångar.
+  bool reachesUnique(QualType t) {
+    t = t.getNonReferenceType().getCanonicalType();
+    if (t->isPointerType()) return containsUnique(t->getPointeeType());
+    const CXXRecordDecl* rd = t->getAsCXXRecordDecl();
+    if (rd == nullptr || !rd->hasDefinition()) return false;
+    rd = rd->getDefinition();
+    if (rd->isLambda()) {
+      for (const FieldDecl* f : rd->fields())
+        if (containsUnique(f->getType()) || (f->getType()->isReferenceType() && containsUnique(f->getType()->getPointeeType())))
+          return true;
+      return false;
+    }
+    for (const CXXMethodDecl* m : rd->methods())
+      if (m->getOverloadedOperator() == OO_Star) return containsUnique(m->getReturnType());
+    QualType el = elementType(t);
+    return el.isNull() || containsUnique(el) || (el->isPointerType() && containsUnique(el->getPointeeType()));
+  }
+
+  // Uttrycket som skapar ett värde (konstruktion, lista, anrop), utan omslag.
+  static const Expr* creation(const Expr* e) {
+    for (;;) {
+      e = e->IgnoreParens();
+      if (const auto* x = dyn_cast<ExprWithCleanups>(e)) e = x->getSubExpr();
+      else if (const auto* x = dyn_cast<MaterializeTemporaryExpr>(e)) e = x->getSubExpr();
+      else if (const auto* x = dyn_cast<CXXBindTemporaryExpr>(e)) e = x->getSubExpr();
+      else if (const auto* x = dyn_cast<CXXFunctionalCastExpr>(e)) e = x->getSubExpr();
+      else if (const auto* x = dyn_cast<CXXDefaultArgExpr>(e)) e = x->getExpr();
+      else if (const auto* x = dyn_cast<CXXDefaultInitExpr>(e)) e = x->getExpr();
+      else if (const auto* x = dyn_cast<ImplicitCastExpr>(e);
+               x != nullptr && (x->getCastKind() == CK_NoOp || x->getCastKind() == CK_ConstructorConversion ||
+                                x->getCastKind() == CK_UserDefinedConversion))
+        e = x->getSubExpr();
+      else return e;
+    }
+  }
+
+  static Place tempPlace(const Expr* e) { return {rootOf(creation(e), Root::temporary), {}}; }
+
+  // Samma temporär oavsett vilket omslag lånemodellen såg.
+  static Place norm(Place p) {
+    if ((p.root.kind == Root::temporary || p.root.kind == Root::extended) && p.root.stmt != nullptr)
+      if (const auto* e = dyn_cast<Expr>(p.root.stmt)) p.root = rootOf(creation(e), Root::temporary);
+    return p;
+  }
+
+  // Platserna ett glvalue betecknar, eller temporären ett prvalue skapar.
+  std::vector<Place> trackedPlaces(const Expr* e, const State& s) {
+    std::vector<Place> out;
+    if (!e->isGLValue()) return {tempPlace(e)};
+    for (const PlaceRef& r : places(e, s)) out.push_back(norm(r.place));
+    return out;
+  }
+
+  // e täcker p: allt under e (och e själv).
+  static bool covers(const Place& e, const Place& p) { return overlap(e, p) && e.path.size() <= p.path.size(); }
+
+  // Ett bestämt objekt (inte ett av flera element m[*]).
+  static bool strong(const Place& p) {
+    if (p.via != nullptr) return true;
+    if (p.extra != 0) return false;
+    return std::ranges::find(p.path, nullptr) == p.path.end();
+  }
+
+  static bool outsideRoot(const Place& p) {
+    return p.root.kind == Root::referent && (p.root.decl == nullptr || isa<FieldDecl>(p.root.decl));
+  }
+
+  // Platsen själv kan vara tom.
+  bool maybeEmpty(const Place& p, const State& s) const {
+    if (s.full.contains(p)) return false;
+    for (const Place& e : s.empty)
+      if (covers(e, p)) return true;
+    return s.outsideEmpty && outsideRoot(p);
+  }
+
+  // Något i platsen (eller platsen) kan vara tomt.
+  bool anyEmpty(const Place& p, const State& s) const {
+    if (s.full.contains(p)) return std::ranges::any_of(s.empty, [&](const Place& e) { return covers(p, e) && e != p; });
+    for (const Place& e : s.empty)
+      if (overlap(e, p)) return true;
+    return s.outsideEmpty && outsideRoot(p);
+  }
+
+  static void setEmpty(const Place& p, State& s) {
+    std::erase_if(s.full, [&](const Place& f) { return covers(p, f); });
+    s.empty.insert(p);
+  }
+
+  static void setFull(const Place& p, State& s) {
+    if (!strong(p)) return;
+    s.empty.erase(p);
+    s.full.insert(p);
+  }
+
+  static void clearUnder(const Place& p, State& s) {
+    if (!strong(p)) return;
+    std::erase_if(s.empty, [&](const Place& e) { return covers(p, e); });
+    std::erase_if(s.full, [&](const Place& f) { return covers(p, f); });
+  }
+
+  // Platsen för tomhet: som slotOf, men en värdeparameter är också sin plats.
+  std::optional<int> emptySlot(const Root& r) const {
+    if (r.kind == Root::object)
+      if (const auto* p = dyn_cast_or_null<ParmVarDecl>(r.decl))
+        for (unsigned i = 0; i < fd_.getNumParams(); ++i)
+          if (fd_.getParamDecl(i) == p) return static_cast<int>(i) + 1;
+    return slotOf(r);
+  }
+
+  static Path relPath(const Place& p) {
+    Path rel = p.path;
+    for (unsigned i = 0; i < p.extra; ++i) rel.push_back(nullptr);
+    return rel;
+  }
+
+  // Funktionen förlitar sig på att platsen (exakt, eller allt i den) inte är tom
+  // vid ingången.
+  void recordRequire(const Place& p, bool all) {
+    if (!checking_) return;
+    std::optional<int> slot = emptySlot(p.root);
+    if (!slot) return;
+    if (*slot >= 0) (all ? record_.requiresAll : record_.requiresFull).insert({static_cast<unsigned>(*slot), relPath(p)});
+    else if (*slot == -1) (all ? record_.requiresAllAbs : record_.requiresFullAbs).insert(p);
+    else record_.known = false;
+  }
+
+  void recordExit(const State& x) {
+    for (const Place& e : x.empty) {
+      std::optional<int> slot = emptySlot(e.root);
+      if (!slot || e.root.kind == Root::object) continue;
+      if (*slot >= 0) record_.exitEmpty.insert({static_cast<unsigned>(*slot), relPath(e)});
+      else if (*slot == -1) record_.exitEmptyAbs.insert(e);
+      else record_.known = false;
+    }
+    for (const Place& f : x.full) {
+      std::optional<int> slot = emptySlot(f.root);
+      if (slot && *slot >= 0 && f.root.kind != Root::object)
+        record_.exitFull.insert({static_cast<unsigned>(*slot), relPath(f)});
+    }
+    record_.exitOutsideEmpty = x.outsideEmpty;
+  }
+
+  // Avreferering: platsen får inte vara tom.
+  void requireFull(const std::vector<Place>& ps, const Stmt* at, const State& s) {
+    for (const Place& p : ps) {
+      if (s.full.contains(p)) continue;
+      if (maybeEmpty(p, s)) return fail(at, "dereferences '" + text(p) + "', which may be empty");
+      recordRequire(p, false);
+    }
+  }
+
+  // Vägarna till unique_ptr i en typ, utan element i behållare ({} för en
+  // unique_ptr själv).
+  std::vector<Path> trackedFields(QualType t, unsigned depth = 0) {
+    t = t.getNonReferenceType().getCanonicalType();
+    if (isUniquePtr(t)) return {{}};
+    std::vector<Path> out;
+    const CXXRecordDecl* rd = t->getAsCXXRecordDecl();
+    if (depth > 4 || rd == nullptr || !rd->hasDefinition() || inStd(*rd)) return out;
+    for (const Subobject& o : subobjectsOf(*rd->getDefinition())) {
+      if (o.field == nullptr || o.field->getType()->isReferenceType() || !containsUnique(o.field->getType())) continue;
+      for (Path q : trackedFields(o.field->getType(), depth + 1)) {
+        q.insert(q.begin(), o.field);
+        out.push_back(q);
+      }
+    }
+    return out;
+  }
+
+  struct Subobject {
+    const FieldDecl* field;
+  };
+  static std::vector<Subobject> subobjectsOf(const CXXRecordDecl& rd) {
+    std::vector<Subobject> out;
+    for (const CXXBaseSpecifier& b : rd.bases())
+      if (const CXXRecordDecl* base = b.getType()->getAsCXXRecordDecl(); base != nullptr && base->hasDefinition())
+        for (const Subobject& o : subobjectsOf(*base->getDefinition())) out.push_back(o);
+    for (const FieldDecl* f : rd.fields()) out.push_back({f});
+    return out;
+  }
+
+  // Tillståndet i `src` (av typen `t`) flyttas eller kopieras till `dst`. Ett
+  // antaget värde (en parameter) blir ett krav: allt i det antas inte tomt.
+  void copyStates(const Place& dst, const Place& src, QualType t, State& s) {
+    auto rebase = [&](const Place& e) {
+      Place r = dst;
+      r.path.insert(r.path.end(), e.path.begin() + static_cast<long>(src.path.size()), e.path.end());
+      r.extra = e.extra;
+      return r;
+    };
+    std::vector<Place> empties, fulls;
+    for (const Place& e : s.empty)
+      if (covers(src, e)) empties.push_back(rebase(e));
+      else if (covers(e, src)) empties.push_back(dst);
+    for (const Place& f : s.full)
+      if (covers(src, f)) fulls.push_back(rebase(f));
+    if (s.outsideEmpty && outsideRoot(src)) empties.push_back(dst);
+    for (const Path& q : trackedFields(t)) {
+      Place sq = src;
+      sq.path.insert(sq.path.end(), q.begin(), q.end());
+      if (!maybeEmpty(sq, s)) fulls.push_back(rebase(sq));
+    }
+    bool assumed = empties.empty();
+    clearUnder(dst, s);
+    for (const Place& e : empties) s.empty.insert(e);
+    if (strong(dst))
+      for (const Place& f : fulls) setFull(f, s);
+    if (assumed) recordRequire(src, true);
+  }
+
+  // Värdet av `e` (unique_ptr eller en typ som innehåller en) till `dst`.
+  void initFrom(const Place& dst, const Expr* e, State& s) {
+    const Expr* c = creation(e);
+    if (isa<ImplicitValueInitExpr, CXXScalarValueInitExpr>(c) || c->isNullPointerConstant(fd_.getASTContext(), Expr::NPC_ValueDependentIsNotNull)) {
+      clearUnder(dst, s);
+      return setEmpty(dst, s);
+    }
+    if (isa<CXXConstructExpr, InitListExpr, CallExpr>(c) && !c->isGLValue())
+      return copyStates(dst, tempPlace(c), c->getType(), s);
+    if (c->isGLValue()) {
+      std::vector<Place> src = trackedPlaces(c, s);
+      if (src.size() == 1) return copyStates(dst, src.front(), c->getType(), s);
+      clearUnder(dst, s);
+      for (const Place& p : src)
+        if (anyEmpty(p, s)) return setEmpty(dst, s);
+      for (const Place& p : src) recordRequire(p, true);
+      return;
+    }
+    clearUnder(dst, s);
+    setEmpty(dst, s);
+  }
+
+  // Värdet kan vara tomt (eller innehålla något tomt).
+  bool valueMaybeEmpty(const Expr* e, const State& s) {
+    const Expr* c = creation(e);
+    if (c->isNullPointerConstant(fd_.getASTContext(), Expr::NPC_ValueDependentIsNotNull)) return true;
+    std::vector<Place> ps = trackedPlaces(c, s);
+    for (const Place& p : ps)
+      if (anyEmpty(p, s)) return true;
+    if (c->isGLValue())
+      for (const Place& p : ps) recordRequire(p, true);
+    return false;
+  }
+
+  // En konstruktion av en typ som innehåller en unique_ptr (före anropets
+  // effekter: källan till en flytt har kvar sitt tillstånd).
+  void constructEmptiness(const CXXConstructExpr* c, State& s) {
+    if (!containsUnique(c->getType())) return;
+    Place t = tempPlace(c);
+    clearUnder(t, s);
+    const CXXConstructorDecl* ctor = c->getConstructor();
+    if (isUniquePtr(c->getType())) {
+      // [unique.ptr.single.ctor]: standardkonstruktion och nullptr ger en tom.
+      if (c->getNumArgs() == 0 ||
+          c->getArg(0)->isNullPointerConstant(fd_.getASTContext(), Expr::NPC_ValueDependentIsNotNull))
+        return setEmpty(t, s);
+      if (isUniquePtr(c->getArg(0)->getType())) return initFrom(t, c->getArg(0), s);
+      return setEmpty(t, s);  // från en rå pekare (STN-69)
+    }
+    if (ctor->isCopyOrMoveConstructor() && c->getNumArgs() >= 1 && (!ctor->isUserProvided() || inStd(*ctor)))
+      return initFrom(t, c->getArg(0), s);
+    if (inStd(*ctor)) {
+      if (c->getNumArgs() != 0) setEmpty(t, s);  // vector(n): värdeinitierade element
+      return;
+    }
+    setEmpty(t, s);
+    // Implicit standardkonstruktor: fält med make_unique som standardinitierare.
+    if (ctor->isDefaultConstructor() && !ctor->isUserProvided())
+      for (const FieldDecl* f : ctor->getParent()->fields())
+        if (isUniquePtr(f->getType()) && f->hasInClassInitializer())
+          if (const auto* call = dyn_cast<CallExpr>(creation(f->getInClassInitializer()));
+              call != nullptr && libraryRuleImpl(ctx_.lib, call->getDirectCallee()).resultNonEmpty) {
+            Place tf = t;
+            tf.path.push_back(f);
+            setFull(tf, s);
+            if (containsUnique(elementType(f->getType()))) setEmpty(opened(tf), s);
+          }
+  }
+
+  // En aggregatinitiering: fält för fält.
+  void listEmptiness(const InitListExpr* il, State& s) {
+    if (!containsUnique(il->getType())) return;
+    Place t = tempPlace(il);
+    clearUnder(t, s);
+    if (il->isTransparent() && il->getNumInits() == 1) return initFrom(t, il->getInit(0), s);
+    const auto* rd = il->getType()->getAsCXXRecordDecl();
+    if (rd == nullptr || rd->isUnion()) return setEmpty(t, s);
+    unsigned i = 0;
+    for (const CXXBaseSpecifier& b : rd->bases()) {
+      if (containsUnique(b.getType())) return setEmpty(t, s);
+      ++i;
+    }
+    for (const FieldDecl* f : rd->fields()) {
+      if (i >= il->getNumInits()) break;
+      const Expr* in = il->getInit(i++);
+      if (!containsUnique(f->getType()) || f->getType()->isReferenceType()) continue;
+      Place tf = t;
+      tf.path.push_back(f);
+      initFrom(tf, in, s);
+    }
+  }
+
+  // Resultatet av ett anrop som ger en unique_ptr (eller en typ med en) som värde.
+  void resultEmptiness(const CallExpr* c, const LoanRule& rule, const Summary* own, State& s) {
+    QualType rt = c->getCallReturnType(fd_.getASTContext());
+    if (rt->isReferenceType() || !containsUnique(rt)) return;
+    Place t = tempPlace(c);
+    clearUnder(t, s);
+    if (rule.resultNonEmpty) {
+      if (isUniquePtr(rt) && containsUnique(elementType(rt))) setEmpty(opened(t), s);
+      return;
+    }
+    if (own != nullptr && !own->returnsMaybeEmpty) return;
+    setEmpty(t, s);
+  }
+
+  // Platserna för plats `slot` + `path` i en egen anropad funktion, hos anroparen.
+  std::vector<Place> targetsFor(const Expr* call, const std::vector<Operand>& ops, unsigned slot, const Path& path,
+                                const State& s) {
+    std::vector<Place> out;
+    if (slot == 0 && isa<CXXConstructExpr>(call)) {
+      Place t = tempPlace(cast<Expr>(call));
+      t.path = path;
+      return {t};
+    }
+    const Operand* o = operandFor(ops, slot);
+    if (o == nullptr) return {};
+    bool byValue = !o->object && !o->param.isNull() && !o->param->isReferenceType() && !o->param->isPointerType() &&
+                   !types_.loanBearing(o->param);
+    if (byValue) {
+      Place t = tempPlace(o->e);
+      t.path = path;
+      return {t};
+    }
+    for (const PlaceRef& r : mapSlot(ops, slot, path, s)) out.push_back(norm(r.place));
+    return out;
+  }
+
+  // Kraven i en egen anropad funktions sammanfattning.
+  void ownRequirements(const Expr* call, const FunctionDecl* fd, const std::vector<Operand>& ops, const Summary& own,
+                       const State& s) {
+    std::string name = fd->getQualifiedNameAsString();
+    auto check = [&](const Place& m, bool all) {
+      if (all ? anyEmpty(m, s) : maybeEmpty(m, s)) {
+        fail(call, "passes '" + text(m) + "', which may be empty, to '" + name + "', which assumes it is not");
+        return;
+      }
+      if (all || !s.full.contains(m)) recordRequire(m, all);
+    };
+    for (const auto& [slot, path] : own.requiresFull)
+      for (const Place& m : targetsFor(call, ops, slot, path, s)) check(m, false);
+    for (const auto& [slot, path] : own.requiresAll)
+      for (const Place& m : targetsFor(call, ops, slot, path, s)) check(m, true);
+    for (const Place& m : own.requiresFullAbs) check(m, false);
+    for (const Place& m : own.requiresAllAbs) check(m, true);
+  }
+
+  void ownExit(const Expr* call, const std::vector<Operand>& ops, const Summary& own, State& s) {
+    for (const auto& [slot, path] : own.exitEmpty)
+      for (const Place& m : targetsFor(call, ops, slot, path, s)) setEmpty(m, s);
+    for (const auto& [slot, path] : own.exitFull) {
+      std::vector<Place> ms = targetsFor(call, ops, slot, path, s);
+      if (ms.size() == 1) setFull(ms.front(), s);
+    }
+    for (const Place& m : own.exitEmptyAbs) setEmpty(m, s);
+    if (own.exitOutsideEmpty) s.outsideEmpty = true;
+  }
+
+  // Anrop utan egen sammanfattning: allt som kan nås ska vara icke-tomt (den
+  // anropade antar det), och det anropet kan ändra kan vara tomt efteråt.
+  // std-kod avrefererar aldrig själv en unique_ptr den får; den kan anropa
+  // användarkod (en lambda, en jämförelse) med det en behållare innehåller.
+  void unknownRequirements(const Expr* call, const FunctionDecl* fd, const LoanRule& rule,
+                           const std::vector<Operand>& ops, const State& s) {
+    if (rule.effect == Effect::identity) return;
+    bool stdCallee = fd != nullptr && (inStd(*fd) || sm_.isInSystemHeader(fd->getLocation()));
+    bool observer = isa_and_nonnull<CXXMethodDecl>(fd) &&
+                    (rule.effect == Effect::reads || rule.effect == Effect::access) && !rule.origin.empty();
+    std::string name = fd != nullptr ? fd->getQualifiedNameAsString() : std::string("?");
+    for (const Operand& o : ops) {
+      bool objectPointer = o.object && o.e->getType()->isPointerType();
+      QualType t = objectPointer ? o.e->getType()->getPointeeType() : o.e->getType().getNonReferenceType();
+      bool loanBearing = operandLoanBearing(o);
+      if (loanBearing ? !reachesUnique(t) : !containsUnique(t)) continue;
+      if (stdCallee && (isUniquePtr(t) || t->isPointerType() || t->isNullPtrType() || observer)) continue;
+      if (stdCallee && o.object && (rule.keepsElements || rule.insertsArguments) && isUniquePtr(elementType(t)))
+        continue;
+      std::vector<Place> reached;
+      if (loanBearing)
+        for (const PlaceRef& r : heldByOperand(o, s)) reached.push_back(norm(r.place));
+      else if (byReference(o))
+        for (const PlaceRef& r : operandPlaces(o, s)) reached.push_back(norm(r.place));
+      else
+        reached.push_back(tempPlace(o.e));
+      for (const Place& m : reached) {
+        if (anyEmpty(m, s))
+          return fail(call, "passes '" + text(m) + "', which may be empty, to '" + name + "'");
+        recordRequire(m, true);
+      }
+    }
+  }
+
+  // Lokala pekare från get() (eller nullptr) kan vara null.
+  bool pointerMaybeNull(const Expr* e, const State& s) {
+    e = e->IgnoreParenImpCasts();
+    if (e->isNullPointerConstant(fd_.getASTContext(), Expr::NPC_ValueDependentIsNotNull)) return true;
+    if (const auto* c = dyn_cast<AbstractConditionalOperator>(e))
+      return pointerMaybeNull(c->getTrueExpr(), s) || pointerMaybeNull(c->getFalseExpr(), s);
+    if (const auto* mc = dyn_cast<CXXMemberCallExpr>(e)) {
+      if (libraryRuleImpl(ctx_.lib, mc->getMethodDecl()).resultNullIfEmpty)
+        for (const Place& p : trackedPlaces(mc->getImplicitObjectArgument(), s))
+          if (maybeEmpty(p, s)) return true;
+      return false;
+    }
+    if (const VarDecl* v = localPointer(e)) return maybeEmpty({rootOf(v, Root::object), {}}, s);
+    return false;
+  }
+
+  const VarDecl* localPointer(const Expr* e) const {
+    const auto* dr = dyn_cast<DeclRefExpr>(e->IgnoreParenImpCasts());
+    const auto* v = dr != nullptr ? dyn_cast<VarDecl>(dr->getDecl()) : nullptr;
+    if (v == nullptr || !v->hasLocalStorage() || !v->getType()->isPointerType()) return nullptr;
+    return v;
+  }
+
+  void assignPointer(const VarDecl* v, const Expr* value, State& s) {
+    Place p{rootOf(v, Root::object), {}};
+    bool null = pointerMaybeNull(value, s);
+    s.empty.erase(p);
+    s.full.erase(p);
+    if (null) s.empty.insert(p);
+  }
+
+  // *b, b->x: en lokal pekare som kan vara null; p.get()->x: p kan vara tom.
+  void derefPointer(const Expr* e, const Stmt* at, const State& s) {
+    const Expr* x = e->IgnoreParenImpCasts();
+    if (const auto* mc = dyn_cast<CXXMemberCallExpr>(x)) {
+      if (libraryRuleImpl(ctx_.lib, mc->getMethodDecl()).resultNullIfEmpty)
+        requireFull(trackedPlaces(mc->getImplicitObjectArgument(), s), at, s);
+      return;
+    }
+    if (const VarDecl* v = localPointer(x))
+      if (maybeEmpty({rootOf(v, Root::object), {}}, s))
+        fail(at, "dereferences " + name(v) + ", which may be null");
+  }
+
+  // Villkor: `p`, `!p`, `p != nullptr`, `p.get() == nullptr`, `b` (pekare).
+  struct NullTest {
+    const Expr* e;
+    bool positive;  // sant villkor = inte tom
+  };
+  std::optional<NullTest> nullTest(const Expr* c) const {
+    ASTContext& ast = fd_.getASTContext();
+    for (;;) {
+      c = c->IgnoreParens();
+      if (const auto* w = dyn_cast<ExprWithCleanups>(c)) { c = w->getSubExpr(); continue; }
+      if (const auto* ic = dyn_cast<ImplicitCastExpr>(c)) {
+        if (ic->getCastKind() == CK_PointerToBoolean) return NullTest{ic->getSubExpr(), true};
+        c = ic->getSubExpr();
+        continue;
+      }
+      break;
+    }
+    if (const auto* mc = dyn_cast<CXXMemberCallExpr>(c);
+        mc != nullptr && isa_and_nonnull<CXXConversionDecl>(mc->getMethodDecl()) &&
+        isUniquePtr(mc->getImplicitObjectArgument()->getType()))
+      return NullTest{mc->getImplicitObjectArgument(), true};
+    const Expr* l = nullptr;
+    const Expr* r = nullptr;
+    bool ne = false;
+    if (const auto* b = dyn_cast<BinaryOperator>(c); b != nullptr && b->isEqualityOp()) {
+      l = b->getLHS(), r = b->getRHS(), ne = b->getOpcode() == BO_NE;
+    } else if (const auto* oc = dyn_cast<CXXOperatorCallExpr>(c);
+               oc != nullptr && oc->getNumArgs() == 2 &&
+               (oc->getOperator() == OO_EqualEqual || oc->getOperator() == OO_ExclaimEqual)) {
+      l = oc->getArg(0), r = oc->getArg(1), ne = oc->getOperator() == OO_ExclaimEqual;
+    }
+    if (l == nullptr) return std::nullopt;
+    if (r->isNullPointerConstant(ast, Expr::NPC_ValueDependentIsNotNull)) return NullTest{l, ne};
+    if (l->isNullPointerConstant(ast, Expr::NPC_ValueDependentIsNotNull)) return NullTest{r, ne};
+    return std::nullopt;
+  }
+
+  std::vector<Place> testedPlaces(const Expr* e, const State& s) {
+    const Expr* x = e->IgnoreParenImpCasts();
+    if (isUniquePtr(x->getType()) && x->isGLValue()) return trackedPlaces(x, s);
+    if (const auto* mc = dyn_cast<CXXMemberCallExpr>(x))
+      if (libraryRuleImpl(ctx_.lib, mc->getMethodDecl()).resultNullIfEmpty)
+        return trackedPlaces(mc->getImplicitObjectArgument(), s);
+    if (const VarDecl* v = localPointer(x)) return {{rootOf(v, Root::object), {}}};
+    return {};
+  }
+
+  void refineWith(State& e, const Expr* c, bool truth) {
+    c = c->IgnoreParens();
+    if (const auto* rw = dyn_cast<CXXRewrittenBinaryOperator>(c)) return refineWith(e, rw->getSemanticForm(), truth);
+    if (const auto* w = dyn_cast<ExprWithCleanups>(c)) return refineWith(e, w->getSubExpr(), truth);
+    if (const auto* u = dyn_cast<UnaryOperator>(c); u != nullptr && u->getOpcode() == UO_LNot)
+      return refineWith(e, u->getSubExpr(), !truth);
+    if (const auto* ic = dyn_cast<ImplicitCastExpr>(c); ic != nullptr && ic->getCastKind() != CK_PointerToBoolean)
+      if (const auto* inner = dyn_cast<UnaryOperator>(ic->getSubExpr()->IgnoreParens());
+          inner != nullptr && inner->getOpcode() == UO_LNot)
+        return refineWith(e, inner, truth);
+    if (const auto* b = dyn_cast<BinaryOperator>(c)) {
+      if (b->getOpcode() == BO_LAnd && truth) {
+        refineWith(e, b->getLHS(), true);
+        return refineWith(e, b->getRHS(), true);
+      }
+      if (b->getOpcode() == BO_LOr && !truth) {
+        refineWith(e, b->getLHS(), false);
+        return refineWith(e, b->getRHS(), false);
+      }
+    }
+    auto test = nullTest(c);
+    if (!test) return;
+    bool nonEmpty = truth == test->positive;
+    for (const Place& p : testedPlaces(test->e, e)) {
+      if (nonEmpty) setFull(p, e);
+      else setEmpty(p, e);
+    }
+  }
+
+  // Kanten pred -> b: villkoret i pred är sant eller falskt.
+  void refine(State& e, const CFGBlock& pred, const CFGBlock& b) {
+    if (pred.succ_size() != 2) return;
+    const auto* cond = dyn_cast_or_null<Expr>(pred.getTerminatorCondition(false));
+    if (cond == nullptr) return;
+    const CFGBlock* t = pred.succ_begin()->getReachableBlock();
+    const CFGBlock* f = (pred.succ_begin() + 1)->getReachableBlock();
+    bool onTrue = t == &b, onFalse = f == &b;
+    if (onTrue == onFalse) return;
+    refineWith(e, cond, onTrue);
+  }
+
   void stmt(const Stmt* st, State& s) {
+    // STN-89: avreferering av en lokal pekare som kan vara null, och
+    // aggregatinitiering av en typ med en unique_ptr.
+    if (const auto* u = dyn_cast<UnaryOperator>(st); u != nullptr && u->getOpcode() == UO_Deref)
+      derefPointer(u->getSubExpr(), st, s);
+    if (const auto* m = dyn_cast<MemberExpr>(st); m != nullptr && m->isArrow()) derefPointer(m->getBase(), st, s);
+    if (const auto* il = dyn_cast<InitListExpr>(st)) listEmptiness(il, s);
     if (const auto* ds = dyn_cast<DeclStmt>(st)) {
       for (const Decl* d : ds->decls()) {
         const auto* vd = dyn_cast<VarDecl>(d);
@@ -1700,6 +2366,9 @@ class LoanChecker {
         if (init == nullptr) continue;
         if (vd->hasLocalStorage()) {
           assignOrigin(vd, init, st, s);
+          if (vd->getType()->isPointerType()) assignPointer(vd, init, s);
+          else if (!vd->getType()->isReferenceType() && containsUnique(vd->getType()))
+            initFrom({rootOf(vd, Root::object), {}}, init, s);
         } else if (vd->getType()->isReferenceType() || types_.loanBearing(vd->getType())) {
           // En statisk lokal variabel överlever funktionen: som en lagring.
           escape(vd->getType()->isReferenceType() ? places(init, s) : values(init, s), st, "stores");
@@ -1714,6 +2383,7 @@ class LoanChecker {
       const auto* dr = dyn_cast<DeclRefExpr>(lhs);
       const auto* vd = dr ? dyn_cast<VarDecl>(dr->getDecl()) : nullptr;
       bool origin = vd != nullptr && vd->hasLocalStorage() && !vd->getType()->isReferenceType();
+      if (origin && b->getOpcode() == BO_Assign && vd->getType()->isPointerType()) assignPointer(vd, b->getRHS(), s);
       if (origin && b->getOpcode() == BO_Assign && types_.loanBearing(vd->getType())) {
         s[vd] = bind(values(b->getRHS(), s));
       } else if (b->getOpcode() == BO_Assign && types_.loanBearing(b->getLHS()->getType())) {
@@ -1729,7 +2399,56 @@ class LoanChecker {
     if (const auto* c = dyn_cast<CallExpr>(st)) {
       const FunctionDecl* fd = c->getDirectCallee();
       std::vector<Operand> ops = operands(c, fd);
+      // STN-89: förvillkor (inte tom), krav i sammanfattningen, flytt mellan
+      // unique_ptr, resultatets tillstånd.
+      const LoanRule lrule = libraryRuleImpl(ctx_.lib, fd);
+      const Summary* own = ownSummary(fd);
+      if (lrule.nonEmpty && !ops.empty() && ops.front().object) requireFull(trackedPlaces(ops.front().e, s), st, s);
+      const auto* assign = dyn_cast<CXXOperatorCallExpr>(c);
+      if (assign != nullptr && (assign->getOperator() != OO_Equal || assign->getNumArgs() != 2 ||
+                                !isUniquePtr(assign->getArg(0)->getType())))
+        assign = nullptr;
+      // Källan sparas före anropet (som tömmer det den flyttas från).
+      std::optional<Place> source;
+      if (assign != nullptr &&
+          !assign->getArg(1)->isNullPointerConstant(fd_.getASTContext(), Expr::NPC_ValueDependentIsNotNull)) {
+        source = Place{rootOf(assign, Root::temporary), {}};
+        initFrom(*source, assign->getArg(1), s);
+      }
+      // swap: tillstånden byter plats ([unique.ptr.single.modifiers], [utility.swap]).
+      std::vector<Place> swapped;
+      std::vector<std::vector<Place>> swapTargets;
+      if (lrule.swaps && ops.size() == 2) {
+        for (unsigned k = 0; k < 2; ++k) {
+          swapTargets.push_back(trackedPlaces(ops[k].e, s));
+          Place key{rootOf(k == 0 ? static_cast<const Stmt*>(c) : c->getCallee(), Root::temporary), {}};
+          if (swapTargets.back().size() == 1) copyStates(key, swapTargets.back().front(), ops[k].e->getType(), s);
+          else setEmpty(key, s);
+          swapped.push_back(key);
+        }
+      }
+      if (own != nullptr) ownRequirements(c, fd, ops, *own, s);
+      else unknownRequirements(c, fd, lrule, ops, s);
       callEffects(c, fd, ops, s);
+      if (own != nullptr) ownExit(c, ops, *own, s);
+      if (assign != nullptr) {
+        std::vector<Place> target = trackedPlaces(assign->getArg(0), s);
+        for (const Place& t : target) {
+          if (!source) setEmpty(t, s);
+          else if (target.size() == 1) copyStates(t, *source, assign->getArg(0)->getType(), s);
+          else if (anyEmpty(*source, s)) setEmpty(t, s);
+        }
+        if (source) clearUnder(*source, s);
+      }
+      for (std::size_t k = 0; k < swapped.size(); ++k) {
+        const std::vector<Place>& to = swapTargets[1 - k];
+        for (const Place& t : to) {
+          if (to.size() == 1) copyStates(t, swapped[k], ops[1 - k].e->getType(), s);
+          else if (anyEmpty(swapped[k], s)) setEmpty(t, s);
+        }
+        clearUnder(swapped[k], s);
+      }
+      resultEmptiness(c, lrule, own, s);
       // Tilldelning till en lånebärande lokal variabel: it = m.find(k). Till
       // något annat (ett fält, `out.text = t`): som en inbyggd tilldelning, en
       // lagring som modellen kontrollerar men inte följer (storeOutside).
@@ -1753,7 +2472,15 @@ class LoanChecker {
       const CXXConstructorDecl* ctor = c->getConstructor();
       for (unsigned i = 0; i < c->getNumArgs(); ++i)
         ops.push_back({c->getArg(i), i < ctor->getNumParams() ? ctor->getParamDecl(i)->getType() : QualType(), false});
+      constructEmptiness(c, s);
+      const Summary* own = ownSummary(ctor);
+      if (own != nullptr) ownRequirements(c, ctor, ops, *own, s);
+      // En flytt- eller implicit kopieringskonstruktor flyttar bara tillståndet
+      // (constructEmptiness): den avrefererar inget.
+      else if (!(ctor->isCopyOrMoveConstructor() && (inStd(*ctor) || !ctor->isUserProvided())))
+        unknownRequirements(c, ctor, libraryRuleImpl(ctx_.lib, ctor), ops, s);
       callEffects(c, ctor, ops, s);
+      if (own != nullptr) ownExit(c, ops, *own, s);
       return;
     }
     if (const auto* r = dyn_cast<ReturnStmt>(st)) {
@@ -1767,6 +2494,7 @@ class LoanChecker {
         refs = values(v, s);
       escape(refs, st, "returns");
       if (checking_) recordReturns(refs);
+      if (!rt->isReferenceType() && containsUnique(rt) && valueMaybeEmpty(v, s)) record_.returnsMaybeEmpty = true;
       return;
     }
     // STN-83: ett kast avslutar funktionen (ingen användning efteråt). Det
@@ -1847,6 +2575,12 @@ class LoanChecker {
     else if (types_.loanBearing(f->getType()))
       refs = values(init.getInit(), s);
     escape(refs, init.getInit(), "stores");
+    // STN-89: fältet får sitt tillstånd av initieraren.
+    if (!f->getType()->isReferenceType() && containsUnique(f->getType())) {
+      if (const auto* c = dyn_cast<CXXConstructExpr>(creation(init.getInit()))) constructEmptiness(c, s);
+      if (const auto* il = dyn_cast<InitListExpr>(creation(init.getInit()))) listEmptiness(il, s);
+      initFrom({rootOf(&fd_, Root::self), {f}}, init.getInit(), s);
+    }
   }
 
   void block(const CFGBlock& b, State& s) {
@@ -1890,6 +2624,7 @@ class LoanChecker {
   std::map<std::pair<Place, bool>, int> loanIds_;
   bool checking_ = false;
   Reason error_;
+  std::map<const CXXRecordDecl*, bool> uniqueMemo_;
 };
 
 }  // namespace

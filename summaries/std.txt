@@ -34,34 +34,49 @@ owner operator== operator!= operator< operator> operator<= operator>= operator<=
 # Insättning med en position: positionen pekar in i behållaren per definition
 # ([sequence.reqmts] a.insert(p, t), a.emplace(p, args)). Bara första
 # argumentet: i a.insert(p, i, j) får i och j inte peka in i a.
-owner insert(iterator,...) emplace(iterator,...) : default position copies
+owner insert(iterator,...) emplace(iterator,...) : default position copies insertsArguments
 
 # Värdet som kopieras in får vara ett element i behållaren: [sequence.reqmts]
 # har inget sådant förvillkor för push_back(t), insert(p, t), insert(p, n, t)
 # eller resize(n, t) (LWG 526), till skillnad från a.assign(n, t), där t inte
 # får referera in i a. Gäller bara const T&-parametrar (inte T&&,
 # [res.on.arguments], och inte emplace_back(args&&...)).
-owner push_back push_front resize : default copies
+owner push_back push_front : default copies insertsArguments
+owner resize : default copies
 
 # [associative.reqmts.general]/[list.modifiers]: insättning ogiltigförklarar
 # inga iteratorer eller referenser (noder flyttas inte).
-owner std::map::insert std::map::emplace std::map::try_emplace : insert
-owner std::multimap::insert std::multimap::emplace : insert
-owner std::set::insert std::set::emplace : insert
-owner std::multiset::insert std::multiset::emplace : insert
-owner std::map::insert(iterator,...) std::map::emplace_hint(iterator,...) std::map::try_emplace(iterator,...) : insert position
-owner std::multimap::insert(iterator,...) std::multimap::emplace_hint(iterator,...) : insert position
-owner std::set::insert(iterator,...) std::set::emplace_hint(iterator,...) : insert position
-owner std::multiset::insert(iterator,...) std::multiset::emplace_hint(iterator,...) : insert position
-owner std::list::push_back std::list::push_front std::list::emplace_back std::list::emplace_front : insert
-owner std::list::insert(iterator,...) std::list::emplace(iterator,...) : insert position
+owner std::map::insert std::map::emplace std::map::try_emplace : insert insertsArguments
+owner std::multimap::insert std::multimap::emplace : insert insertsArguments
+owner std::set::insert std::set::emplace : insert insertsArguments
+owner std::multiset::insert std::multiset::emplace : insert insertsArguments
+owner std::map::insert(iterator,...) std::map::emplace_hint(iterator,...) std::map::try_emplace(iterator,...) : insert position insertsArguments
+owner std::multimap::insert(iterator,...) std::multimap::emplace_hint(iterator,...) : insert position insertsArguments
+owner std::set::insert(iterator,...) std::set::emplace_hint(iterator,...) : insert position insertsArguments
+owner std::multiset::insert(iterator,...) std::multiset::emplace_hint(iterator,...) : insert position insertsArguments
+owner std::list::push_back std::list::push_front std::list::emplace_back std::list::emplace_front : insert insertsArguments
+owner std::list::insert(iterator,...) std::list::emplace(iterator,...) : insert position insertsArguments
 
 # Radering via iterator: iteratorn får peka in i behållaren och blir ogiltig
 # ([sequence.reqmts] a.erase(q), [associative.reqmts] a.erase(q)); den
 # returnerade iteratorn ersätter den (`it = c.erase(it)`). Övriga lån in i
 # behållaren dör (försiktigt: för noder bara det raderade elementet).
-owner erase(iterator) : default position consumes
-owner erase(iterator,iterator) : default range
+owner erase(iterator) : default position consumes keepsElements
+owner erase(iterator,iterator) : default range keepsElements
+
+# --- Tomhet (STN-89) --------------------------------------------------------
+# [unique.ptr.single.observers]: operator* och operator-> har förvillkoret
+# get() != nullptr; get() ger den lagrade pekaren (null när *this är tom).
+owner std::unique_ptr::operator* std::unique_ptr::operator-> : access nonEmpty
+owner std::unique_ptr::get : default resultNullIfEmpty
+# [unique.ptr.single.modifiers] swap(u), [utility.swap] swap(a, b): byter innehåll.
+owner std::unique_ptr::swap : default swaps
+# [sequence.reqmts], [vector.modifiers], [deque.modifiers]: emplace_back(args)
+# konstruerar elementet ur args (utan args värdeinitierat: en tom unique_ptr);
+# pop_back, pop_front och clear tar bort element, reserve och shrink_to_fit
+# flyttar dem ([unique.ptr.single.ctor]: en flytt behåller pekaren).
+owner emplace_back emplace_front : default insertsArguments
+owner pop_back pop_front clear reserve shrink_to_fit : default keepsElements
 
 # --- Fria funktioner (även std::ranges-algoritmer) -------------------------
 free operator== operator!= operator< operator> operator<= operator>= operator<=> : reads
@@ -73,6 +88,10 @@ free get_if : access
 free get : access forwards
 # [iterator.range]: std::begin(c) returnerar c.begin(), std::end(c) c.end() osv.
 free begin end cbegin cend rbegin rend crbegin crend : access
+# [unique.ptr.create]: make_unique ger unique_ptr<T>(new T(...)), aldrig tom
+# (new kastar i stället för att ge null).
+free make_unique make_unique_for_overwrite : default resultNonEmpty
+free swap : default swaps
 # [forward], [utility.as.const]: resultatet är argumentet.
 free move forward as_const : identity
 # [alg.find], [alg.search], [alg.binary.search] m.fl.: resultatet är en
