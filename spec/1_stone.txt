@@ -659,6 +659,20 @@ calls (STN-62), and the predicate is a lambda argument (STN-79). Another
 algorithm, another container in any of the places, `c.begin() + n`, or the
 idiom inside a larger expression shall still be rejected.
 
+STN-86  Constant indices into owned arrays
+Two operands of a call that are elements of the same owned array (STN-75),
+written in the same form (the same fields, as many indices, down to the same
+variable or *this) and with integer constant indices that differ at some
+level, are different objects for the aliasing rule at calls (G3, STN-62):
+`write_pair(values[0], values[1])`, `f(m[0][1], m[1][0])`,
+`f(g.cells[1], g.cells[3])`. Elements are distinct whatever the earlier
+indices are, so the loan model's places keep `[*]` for every index. An index
+outside the array is undefined behaviour that Silver shall find, not the
+loan model. A variable index, the same constant index, a different form (a
+whole row and an element of it), an element reached through a local
+reference and `std::array` (operator[] is a call) are the same place as
+before.
+
 STN-79  Lambdas as arguments to std
 A lambda shall also be allowed directly as an argument of a call to a std
 function (`std::sort(b, e, [](const T& a, const T& b) { ... })`), or a local

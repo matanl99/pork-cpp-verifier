@@ -923,6 +923,53 @@ class LoanChecker {
     bool object = false;
   };
 
+  // STN-86: två element i samma ägda array med olika konstanta index är skilda
+  // objekt (`write_pair(values[0], values[1])`). Platserna har bara [*], så det
+  // avgörs på uttrycken: samma form (samma fält, lika många index, samma
+  // variabel eller *this) och på någon nivå två heltalskonstanta index som
+  // skiljer sig. Ett index utanför arrayen är UB som Silver ska fånga, inte
+  // lånemodellen. Allt annat (ett variabelt index, en referens, std::array) är
+  // som förut: samma plats.
+  bool distinctElements(const Expr* a, const Expr* b) const {
+    const ASTContext& ctx = fd_.getASTContext();
+    bool differ = false;
+    for (;;) {
+      a = a->IgnoreParenImpCasts();
+      b = b->IgnoreParenImpCasts();
+      const auto* sa = dyn_cast<ArraySubscriptExpr>(a);
+      const auto* sb = dyn_cast<ArraySubscriptExpr>(b);
+      if (sa != nullptr && sb != nullptr) {
+        const Expr* ba = sa->getBase()->IgnoreParenImpCasts();
+        const Expr* bb = sb->getBase()->IgnoreParenImpCasts();
+        if (!ba->getType()->isConstantArrayType() || !bb->getType()->isConstantArrayType()) return false;
+        Expr::EvalResult ia, ib;
+        if (sa->getIdx()->EvaluateAsInt(ia, ctx) && sb->getIdx()->EvaluateAsInt(ib, ctx) &&
+            !llvm::APSInt::isSameValue(ia.Val.getInt(), ib.Val.getInt()))
+          differ = true;
+        a = ba;
+        b = bb;
+        continue;
+      }
+      if (sa != nullptr || sb != nullptr) return false;
+      const auto* ma = dyn_cast<MemberExpr>(a);
+      const auto* mb = dyn_cast<MemberExpr>(b);
+      if (ma != nullptr && mb != nullptr) {
+        if (ma->getMemberDecl() != mb->getMemberDecl() || !isa<FieldDecl>(ma->getMemberDecl())) return false;
+        a = ma->getBase();
+        b = mb->getBase();
+        if ((ma->isArrow() || mb->isArrow()) &&
+            !(isa<CXXThisExpr>(a->IgnoreParenImpCasts()) && isa<CXXThisExpr>(b->IgnoreParenImpCasts())))
+          return false;
+        continue;
+      }
+      if (ma != nullptr || mb != nullptr) return false;
+      if (isa<CXXThisExpr>(a) && isa<CXXThisExpr>(b)) return differ;
+      const auto* da = dyn_cast<DeclRefExpr>(a);
+      const auto* db = dyn_cast<DeclRefExpr>(b);
+      return da != nullptr && db != nullptr && da->getDecl() == db->getDecl() && isa<VarDecl>(da->getDecl()) && differ;
+    }
+  }
+
   static std::vector<Operand> operands(const CallExpr* c, const FunctionDecl* fd) {
     std::vector<Operand> out;
     unsigned first = 0;
@@ -1474,6 +1521,7 @@ class LoanChecker {
         if ((copiedIn(refs[i].operand) && mayPointIntoObject(refs[j].operand)) ||
             (copiedIn(refs[j].operand) && mayPointIntoObject(refs[i].operand)))
           continue;
+        if (distinctElements(oi.e, oj.e)) continue;  // STN-86: values[0], values[1]
         for (const PlaceRef& a : refs[i].places)
           for (const PlaceRef& b : refs[j].places)
             if (mayOverlap(a.place, b.place))

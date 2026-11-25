@@ -292,10 +292,9 @@ void change_chars(char& a, const char& b) { a = b; }
 // expect: not-stone: may be the same object
 void overlap_chars(FixedBuffer& b, int i, int j) { change_chars(b.data[i], b.data[j]); }
 
-// Indexet är ett okänt element för lånemodellen, också när det är en
-// konstant: 0 och 7 kan inte skiljas åt (strängt, inte fel).
-// rules: STN-75, STN-62
-// expect: not-stone: may be the same object
+// Olika konstanta index är skilda element (STN-86).
+// rules: STN-75, STN-86
+// expect: stone
 void two_cells(FixedBuffer& b) { change_chars(b.data[0], b.data[7]); }
 
 #ifdef PORK_RUN
