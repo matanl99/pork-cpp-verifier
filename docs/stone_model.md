@@ -600,6 +600,15 @@ varandra kunde `h.list->push_back(...)` då aldrig ogiltigförklara ett lån i e
 lånebärande innehåll (iteratorfält, behållare med pekare) pekar på "något okänt utanför", som
 kan aliasa allt yttre (`pointer_member_direct`).
 
+**Det ett yttre objekt håller** (STN-93, korpus 131): när det yttre objektet är `*this`
+eller en parameter är roten "det *this/parametern håller" (`Root::held`), inte "något okänt
+utanför". Inne i funktionen aliasar den som "okänt utanför". I sammanfattningen sparas ett
+returnerat eller lagrat lån av den som `Ret::held` med objektets plats, och hos anroparen
+blir det lånen som operanden håller (`mapRet`, `heldByOperand`). Annars såg anroparen ett
+lån av något okänt utanför: `const char& r = c.cur();` med `c` en lokal `Cursor` över en
+lokal sträng `s` överlevde både `s += ...` och att `s` dog. Skrivningar och tomhet sparas
+fortfarande som "okänt utanför" (`absolute`).
+
 Inom en TU. Över TU:er (sammanfattningen i `FunctionFacts`, fixpunkt i kärnan) är nästa
 steg om anrop mellan filer visar sig behöva det; till dess får de standarden.
 

@@ -821,7 +821,11 @@ stored in argument k), and the caller shall follow it as if it had stored
 the loan itself (STN-92 when the target is outside the caller). A loan of a
 local object's own storage may be stored in the object (`x.v = x.t;` on a
 local x): the loan model follows it, so a copy of x borrows x.t, and changing
-x.t while x is used later is rejected.
+x.t while x is used later is rejected. A loan that a function returns or
+stores through a loan-bearing field of `*this` or of a reference parameter
+(`const char& cur() const { return text[pos]; }`) shall, at the caller,
+borrow what the object operand holds (`c.cur()` borrows what `c` borrows),
+not an unknown object outside the caller.
 
 STN-95  References that survive insertion
 A loan of an element, or of what an element owns, that a local reference or

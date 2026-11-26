@@ -67,12 +67,19 @@ struct Root {
   Kind kind = object;
   const Decl* decl = nullptr;
   const Stmt* stmt = nullptr;
+  // referent, held: det objektet utanför funktionen (parametern `decl`, eller
+  // *this när `decl` är funktionen) håller i sina lånefält. Hos anroparen:
+  // lånen som operanden håller (STN-93). Utanför sammanfattningar som kOutside.
+  bool held = false;
   auto operator<=>(const Root&) const = default;
 };
 
 Root rootOf(const Decl* d, Root::Kind k) { return {k, d, nullptr}; }
 Root rootOf(const Stmt* st, Root::Kind k) { return {k, nullptr, st}; }
 const Root kOutside{Root::referent, nullptr, nullptr};
+
+// Något okänt utanför funktionen: kOutside, eller det ett yttre objekt håller.
+bool outsideUnknown(const Root& r) { return r.kind == Root::referent && (r.decl == nullptr || r.held); }
 
 
 struct Place {
@@ -92,6 +99,12 @@ struct Place {
   unsigned char viaExtra = 0;
   auto operator<=>(const Place&) const = default;
 };
+
+// Den absoluta formen (för sammanfattningar): det ett objekt håller är okänt.
+Place absolute(Place p) {
+  if (p.root.held) p.root = kOutside;
+  return p;
+}
 
 // Den lokala variabeln som är roten, om någon.
 const VarDecl* rootVar(const Place& p) {
@@ -343,6 +356,7 @@ struct Summary {
     int slot;     // -1: `place` är absolut
     Place place;  // slot >= 0: bara vägen används
     bool exclusive;
+    bool held = false;  // det plats `slot` håller (STN-93): vägen börjar med [*]
     auto operator<=>(const Ret&) const = default;
   };
   std::set<Ret> returns;
@@ -540,6 +554,8 @@ class LoanChecker {
       case Root::staticStorage:
         if (p.root == kOutside)
           s = "an object outside the function";
+        else if (p.root.held)
+          s = std::string("what ") + (p.root.decl == &fd_ ? "*this" : "'" + cast<NamedDecl>(p.root.decl)->getNameAsString() + "'") + " holds";
         else if (const auto* nd = dyn_cast_or_null<NamedDecl>(p.root.decl))
           s = declName(*nd);
         else
@@ -586,7 +602,7 @@ class LoanChecker {
       if (const auto* md = dyn_cast<CXXMethodDecl>(&fd_)) return md->getThisType()->getPointeeType();
       return {};
     }
-    if (r.kind != Root::referent) return {};
+    if (r.kind != Root::referent || r.held) return {};
     if (const auto* f = dyn_cast_or_null<FieldDecl>(r.decl)) {
       QualType t = f->getType().getNonReferenceType();
       return t->isPointerType() ? t->getPointeeType() : t;  // pekarfält: det det pekar på
@@ -603,7 +619,7 @@ class LoanChecker {
   // Målet för en referensmedlem/ett pekarfält, eller något okänt yttre: kan
   // vara samma objekt som en parameter eller *this.
   static bool memberTarget(const Root& r) {
-    return r.kind == Root::referent && (r == kOutside || isa_and_nonnull<FieldDecl>(r.decl));
+    return r.kind == Root::referent && (outsideUnknown(r) || isa_and_nonnull<FieldDecl>(r.decl));
   }
 
   bool mayAlias(const Root& a, const Root& b) {
@@ -654,7 +670,7 @@ class LoanChecker {
     switch (r.kind) {
       case Root::self: return 0;
       case Root::referent:
-        if (r == kOutside || isa_and_nonnull<FieldDecl>(r.decl)) return -1;
+        if (outsideUnknown(r) || isa_and_nonnull<FieldDecl>(r.decl)) return -1;
         if (const auto* p = dyn_cast_or_null<ParmVarDecl>(r.decl))
           for (unsigned i = 0; i < fd_.getNumParams(); ++i)
             if (fd_.getParamDecl(i) == p) return static_cast<int>(i) + 1;
@@ -693,7 +709,7 @@ class LoanChecker {
       return;
     }
     if (*slot == -2) record_.known = false;
-    else if (*slot == -1) record_.absoluteWrites.insert(p);
+    else if (*slot == -1) record_.absoluteWrites.insert(absolute(p));
     else {
       std::pair<unsigned, Path> key{static_cast<unsigned>(*slot), p.path};
       bool first = record_.writes.insert(key).second;
@@ -706,6 +722,12 @@ class LoanChecker {
 
   // Ett lån i sammanfattningens form (relativt en plats, eller absolut).
   std::optional<Summary::Ret> summaryRef(const PlaceRef& r) const {
+    if (r.place.root.held) {
+      // Det plats `slot` håller: vägen börjar med [*] (det lånefälten pekar på).
+      std::optional<int> slot = holderSlot(r.place.root);
+      if (!slot) return std::nullopt;
+      return Summary::Ret{*slot, {{}, relPath(r.place)}, r.exclusive, true};
+    }
     std::optional<int> slot = slotOf(r.place.root);
     if (!slot || *slot == -2 || throughPointerField(r.place.path)) return std::nullopt;
     // Hopslagna nivåer (extra) sparas som [*]-steg: hos anroparen är det
@@ -713,6 +735,14 @@ class LoanChecker {
     Place rel{{}, r.place.path};
     for (unsigned i = 0; i < r.place.extra; ++i) rel.path.push_back(nullptr);
     return Summary::Ret{*slot, *slot == -1 ? r.place : rel, r.exclusive};
+  }
+
+  // Platsen för objektet som håller lånen i en held-rot.
+  std::optional<int> holderSlot(const Root& r) const {
+    if (r.decl == &fd_) return 0;
+    for (unsigned i = 0; i < fd_.getNumParams(); ++i)
+      if (fd_.getParamDecl(i) == r.decl) return static_cast<int>(i) + 1;
+    return std::nullopt;
   }
 
   void recordReturns(const std::vector<PlaceRef>& refs) {
@@ -927,6 +957,16 @@ class LoanChecker {
     return vd;
   }
 
+  // Det ett yttre objekt håller i sina lånefält: parametern eller *this,
+  // annars okänt (kOutside).
+  Root holderRoot(const Place& p) const {
+    const Root& r = p.root;
+    if (r.kind == Root::self) return {Root::referent, &fd_, nullptr, true};
+    if (r.kind == Root::referent && !r.held && isa_and_nonnull<ParmVarDecl>(r.decl))
+      return {Root::referent, r.decl, nullptr, true};
+    return kOutside;
+  }
+
   // Lånen som objekten på platserna håller (objektens typ: `t`).
   std::vector<PlaceRef> heldIn(const std::vector<PlaceRef>& objects, QualType t, const Expr* e, const State& s) {
     std::vector<PlaceRef> out;
@@ -965,7 +1005,7 @@ class LoanChecker {
         out.insert(out.end(), fields.begin(), fields.end());
         // Annat lånebärande innehåll pekar på något okänt utanför, inte på
         // lagring som objektet äger (h.list kan peka på en parameter).
-        if (other) out.push_back({{kOutside, {nullptr}}, p.exclusive, -1});
+        if (other) out.push_back({{holderRoot(p.place), {nullptr}}, p.exclusive, -1});
         else if (fields.empty()) out.push_back({opened(p.place), p.exclusive, -1});
         continue;
       }
@@ -1243,6 +1283,20 @@ class LoanChecker {
     return base;
   }
 
+  // Ett lån i sammanfattningen (slot >= 0), hos anroparen. `held`: det
+  // operanden håller, sedan resten av vägen.
+  std::vector<PlaceRef> mapRet(const std::vector<Operand>& ops, const Summary::Ret& r, const State& s) {
+    if (!r.held) return mapSlot(ops, static_cast<unsigned>(r.slot), r.place.path, s);
+    const Operand* o = operandFor(ops, static_cast<unsigned>(r.slot));
+    if (o == nullptr) return {};
+    std::vector<PlaceRef> base = heldByOperand(*o, s);
+    for (PlaceRef& b : base) {
+      if (r.place.path.size() > 1) b.loan = -1;
+      b.place.path.insert(b.place.path.end(), r.place.path.begin() + 1, r.place.path.end());
+    }
+    return base;
+  }
+
   std::vector<PlaceRef> callResult(const CallExpr* c, const State& s) {
     const FunctionDecl* fd = c->getDirectCallee();
     const LoanRule rule = libraryRuleImpl(ctx_.lib, fd);
@@ -1255,7 +1309,7 @@ class LoanChecker {
           out.push_back({r.place, r.exclusive, -1});
           continue;
         }
-        for (PlaceRef& m : mapSlot(ops, static_cast<unsigned>(r.slot), r.place.path, s)) {
+        for (PlaceRef& m : mapRet(ops, r, s)) {
           m.exclusive = m.exclusive && r.exclusive;
           out.push_back(m);
         }
@@ -1764,7 +1818,7 @@ class LoanChecker {
         std::vector<PlaceRef> where = mapSlot(ops, st.slot, st.path, s);
         std::vector<PlaceRef> incoming;
         if (st.src.slot < 0) incoming.push_back({st.src.place, st.src.exclusive, -1});
-        else incoming = mapSlot(ops, static_cast<unsigned>(st.src.slot), st.src.place.path, s);
+        else incoming = mapRet(ops, st.src, s);
         for (PlaceRef& r : incoming) r.loan = -1;
         if (incoming.empty()) continue;
         for (const PlaceRef& w : where) {
@@ -2054,7 +2108,7 @@ class LoanChecker {
   }
 
   static bool outsideRoot(const Place& p) {
-    return p.root.kind == Root::referent && (p.root.decl == nullptr || isa<FieldDecl>(p.root.decl));
+    return p.root.kind == Root::referent && (outsideUnknown(p.root) || isa<FieldDecl>(p.root.decl));
   }
 
   // Platsen själv kan vara tom.
@@ -2112,7 +2166,7 @@ class LoanChecker {
     std::optional<int> slot = emptySlot(p.root);
     if (!slot) return;
     if (*slot >= 0) (all ? record_.requiresAll : record_.requiresFull).insert({static_cast<unsigned>(*slot), relPath(p)});
-    else if (*slot == -1) (all ? record_.requiresAllAbs : record_.requiresFullAbs).insert(p);
+    else if (*slot == -1) (all ? record_.requiresAllAbs : record_.requiresFullAbs).insert(absolute(p));
     else record_.known = false;
   }
 
@@ -2121,7 +2175,7 @@ class LoanChecker {
       std::optional<int> slot = emptySlot(e.root);
       if (!slot || e.root.kind == Root::object) continue;
       if (*slot >= 0) record_.exitEmpty.insert({static_cast<unsigned>(*slot), relPath(e)});
-      else if (*slot == -1) record_.exitEmptyAbs.insert(e);
+      else if (*slot == -1) record_.exitEmptyAbs.insert(absolute(e));
       else record_.known = false;
     }
     for (const Place& f : x.full) {
