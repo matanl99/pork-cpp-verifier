@@ -334,7 +334,10 @@ view the loan model follows, `std::span<const T>(v)`), so the argument
 counts as a read where no user code the constructor reaches can write it:
 no non-const member function of T (a conversion function) and no function
 with a non-const reference parameter to T (`Bump(int&)` in
-`std::optional<Bump>(a)`).
+`std::optional<Bump>(a)`). The loan model (STN-62) counts it as a read where
+T is an arithmetic or enumeration type and the constructed class holds no
+loans (`std::pair<int, int> p{n, n};`, not `std::reference_wrapper<int>`);
+other arguments count as possibly written there.
 
 STN-26  Reference arguments are paths
 An argument for a `T&` parameter, or the object of a non-const method, shall

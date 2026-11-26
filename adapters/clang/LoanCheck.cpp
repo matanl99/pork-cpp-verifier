@@ -1195,7 +1195,42 @@ class LoanChecker {
     }
   }
 
-  static std::vector<Operand> operands(const CallExpr* c, const FunctionDecl* fd) {
+  // Parametertypen för argument i: som deklarerad, utom en forwarding-referens
+  // (U&&) i en std-konstruktor som instansierats som `T&` med T aritmetisk
+  // eller enum, i en klass som inte håller lån (pair<int, int>, inte
+  // reference_wrapper<int>): konstruktorn kopierar bara värdet och når ingen
+  // användarkod, så det är en läsning (`const T&`, STN-25).
+  QualType paramType(const FunctionDecl* fd, unsigned i) {
+    if (fd == nullptr || i >= fd->getNumParams()) return {};
+    QualType t = fd->getParamDecl(i)->getType();
+    const auto* ref = t->getAs<LValueReferenceType>();
+    const auto* ctor = dyn_cast<CXXConstructorDecl>(fd);
+    if (ref == nullptr || ctor == nullptr || !inStd(*fd)) return t;
+    if (types_.loanBearing(fd->getASTContext().getCanonicalTagType(ctor->getParent()))) return t;
+    QualType pointee = ref->getPointeeType();
+    if (pointee.isConstQualified() || pointee.isVolatileQualified() ||
+        !(pointee->isArithmeticType() || pointee->isEnumeralType()))
+      return t;
+    const FunctionDecl* pattern = fd->getTemplateInstantiationPattern();
+    if (pattern == nullptr || pattern->getNumParams() == 0) return t;
+    // Ett parameterpaket (`tuple(UTypes&&...)`) är mönstrets sista parameter.
+    const ParmVarDecl* pp = nullptr;
+    if (i < pattern->getNumParams() && !pattern->getParamDecl(i)->isParameterPack()) pp = pattern->getParamDecl(i);
+    else if (const ParmVarDecl* last = pattern->getParamDecl(pattern->getNumParams() - 1); last->isParameterPack() &&
+             i + 1 >= pattern->getNumParams())
+      pp = last;
+    if (pp == nullptr) return t;
+    QualType pt = pp->getType();
+    if (const auto* pe = pt->getAs<PackExpansionType>()) pt = pe->getPattern();
+    const auto* rr = pt->getAs<RValueReferenceType>();
+    if (rr == nullptr || rr->getPointeeType().hasQualifiers() ||
+        rr->getPointeeType()->getAs<TemplateTypeParmType>() == nullptr)
+      return t;
+    ASTContext& ctx = fd->getASTContext();
+    return ctx.getLValueReferenceType(pointee.withConst());
+  }
+
+  std::vector<Operand> operands(const CallExpr* c, const FunctionDecl* fd) {
     std::vector<Operand> out;
     unsigned first = 0;
     if (const auto* mc = dyn_cast<CXXMemberCallExpr>(c)) {
@@ -1208,8 +1243,7 @@ class LoanChecker {
     }
     for (unsigned i = first; i < c->getNumArgs(); ++i) {
       unsigned p = i - first;
-      QualType param = fd && p < fd->getNumParams() ? fd->getParamDecl(p)->getType() : QualType();
-      out.push_back({c->getArg(i), param, false});
+      out.push_back({c->getArg(i), paramType(fd, p), false});
     }
     return out;
   }
@@ -2765,7 +2799,7 @@ class LoanChecker {
       std::vector<Operand> ops;
       const CXXConstructorDecl* ctor = c->getConstructor();
       for (unsigned i = 0; i < c->getNumArgs(); ++i)
-        ops.push_back({c->getArg(i), i < ctor->getNumParams() ? ctor->getParamDecl(i)->getType() : QualType(), false});
+        ops.push_back({c->getArg(i), paramType(ctor, i), false});
       constructEmptiness(c, s);
       const Summary* own = ownSummary(ctor);
       if (own != nullptr) ownRequirements(c, ctor, ops, *own, s);
