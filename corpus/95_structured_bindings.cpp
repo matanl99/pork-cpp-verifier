@@ -96,6 +96,28 @@ int bad_rvalue_ref(P p) {
   return a;
 }
 
+// `auto&&` på ett lvärde deduceras till P&, men formen avvisas ändå.
+// rules: STN-84
+// expect: not-stone: structured binding with auto&&
+int bad_forwarding_lvalue(P& p) {
+  auto&& [a, b] = p;
+  return a + b;
+}
+
+// rules: STN-84
+// expect: not-stone: structured binding with auto&&
+int bad_forwarding_const(const P& p) {
+  auto&& [a, b] = p;
+  return a + b;
+}
+
+// rules: STN-84, STN-4
+// expect: not-stone: structured binding with auto&&
+int bad_forwarding_pair(std::pair<int, int>& q) {
+  auto&& [a, b] = q;
+  return a + b;
+}
+
 // --- std::pair och std::tuple (betrodda, bindningen går via std::get) -------
 
 // rules: STN-84, STN-4

@@ -182,9 +182,7 @@ void move_mixed(std::vector<int>& v, std::vector<int>& w, std::vector<int>& out)
 void move_array_overlap(std::array<int, 3>& a) {
   auto b = a.begin();
   auto e = a.end();
-  --e;
   auto d = a.begin();
-  ++d;
   std::move(b, e, d);
 }
 

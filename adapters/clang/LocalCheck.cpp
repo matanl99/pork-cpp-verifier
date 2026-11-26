@@ -1585,9 +1585,14 @@ class Checker {
     if (const auto* b = dyn_cast<BinaryOperator>(e)) {
       if (b->getOpcode() == BO_Comma)  // sekvenserad: varje led är en "sats"
         return all(exprStmt(b->getLHS()), exprStmt(b->getRHS()));
+      // STN-39: p += n och p -= n är pekararitmetik, som p + n.
+      if (b->isCompoundAssignmentOp() && b->getLHS()->getType()->isPointerType())
+        return "pointer arithmetic or ordering: " + b->getOpcodeStr().str();
       if (b->isAssignmentOp()) return assignment(b->getLHS(), b->getRHS());
     }
     if (const auto* u = dyn_cast<UnaryOperator>(e); u != nullptr && u->isIncrementDecrementOp()) {
+      if (u->getSubExpr()->getType()->isPointerType())  // STN-39: ++p är pekararitmetik
+        return std::string("pointer arithmetic or ordering: ") + (u->isIncrementOp() ? "++" : "--");
       if (auto r = written(u->getSubExpr())) return r;
       if (auto p = pathOf(u->getSubExpr())) noteWrite(*p);
       return std::nullopt;
@@ -1803,6 +1808,11 @@ class Checker {
   // typer, resultatet av std::get på dd (ett okänt element av dd, som i
   // range-for över std::map). Inget annat anrop godtas i en hållare.
   Reason decomposition(const DecompositionDecl& dd) {
+    // STN-84: `auto&& [a, b]` avvisas, också när det deduceras till T& (lvärde).
+    if (const TypeSourceInfo* ts = dd.getTypeSourceInfo(); ts != nullptr && ts->getType()->isReferenceType())
+      if (!ts->getTypeLoc().getUnqualifiedLoc().getAs<RValueReferenceTypeLoc>().isNull() ||
+          !ts->getType()->getAs<ReferenceType>()->isSpelledAsLValue())
+        return "structured binding with auto&&";
     for (const BindingDecl* binding : dd.bindings()) {
       std::string name = "structured binding '" + binding->getNameAsString() + "'";
       if (auto w = types_.whyNotValue(binding->getType()))
