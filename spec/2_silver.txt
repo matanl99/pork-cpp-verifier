@@ -58,7 +58,8 @@ SLV-13  std::vector access out of range (operator[], at, front, back on an
 SLV-14  std::optional access without a value (operator*, ->, value)
 SLV-15  std::span access out of range
 SLV-16  A loop or recursion that needs more than --unwind iterations
-Each of SLV-5..16 shall be a check: if some input satisfying the
+SLV-44  Owned array access out of range (STN-75; see below)
+Each of SLV-5..16 and SLV-44 shall be a check: if some input satisfying the
 preconditions can reach it, the function shall not be Silver, with the
 finding and its source line.
 
@@ -236,3 +237,15 @@ A `throw` statement (STN-83) shall be translated as a check that it cannot
 be reached under the preconditions (like `raise` in SPARK): a reachable
 throw makes the function stone but not silver, with the throw as the
 reason. A silver function shall not carry the assumption `throws E`.
+
+SLV-44  Owned arrays
+An owned array `T[N]` (STN-75) shall be translated as a C struct holding a
+`T v[N]`, so that it is a value as in C++: a struct with an array field is
+copied with it, and an array can be a field, a parameter and input from the
+harness. A `const T (&)[N]` parameter is a value, a `T (&)[N]` parameter a
+pointer, as for other types. Each subscript `a[i]` shall check `0 <= i < N`
+where it is evaluated: `not silver: array index out of bounds` (ESBMC: `array
+bounds violated`), with the line of the subscript. The input elements are
+valid values (finite floats, enumerations in range). Not translated yet:
+local arrays and their initializers, constant tables, range-for over an
+array and `std::array`: `not silver: cannot translate to C: ...`.

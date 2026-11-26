@@ -125,6 +125,30 @@ Av standardbibliotekets typer översätts bara `std::optional`, `std::vector`, `
 `std::variant` och `std::span<const T>`. Andra betrodda typer (t.ex. `std::map`,
 `std::array`, `std::unique_ptr`) ger "trusted type ... is not supported yet".
 
+## Ägda arrayer (SLV-44)
+
+En ägd array `T[N]` (STN-75) blir `struct pork_arr_<T>_<N>ul { T v[N]; }`, samma struct som
+span-datan i testramen. Den är då ett värde som i C++: en struct med ett arrayfält kopieras
+med det, och en array kan vara fält, parameter och indata från en nondet-funktion (C kan inte
+returnera en naken array). Ingen gräns behövs, storleken står i typen.
+
+| C++ | C |
+|---|---|
+| `const int (&a)[4]` | `struct pork_arr_int_4ul a` (ett värde, som andra `const T&`) |
+| `int (&a)[3]` | `struct pork_arr_int_3ul *a` |
+| `struct Board { int cells[9]; }` | fältet `struct pork_arr_int_9ul cells` |
+| `a[i]`, `m[r][c]` | `a.v[({ T pork_ix = i; assert(0 <= pork_ix < N); pork_ix; })]` |
+
+Kontrollen är egen, i en GNU statement expression vid användningen (som `checkedConversion`):
+genom en pekarparameter vet bevisaren inte N, fyndet får indexeringens rad, och ESBMC ger samma
+dom (med sin egen text, "array bounds violated", som kommer först). cbmc:s `--pointer-check` ser
+samma läsning, därav "(+1 more)". Indata är giltiga element (ändliga flyttal, enums inom sitt
+intervall, `assumeValid` i en loop). Ett `const` på en array sitter på elementtypen, så målet
+för en referens prövas med `isConstant(ctx)`, inte `isConstQualified()`.
+
+Inte än: lokala arrayer och deras initierare, konstanta tabeller, range-for över en array och
+`std::array` ("cannot translate to C: ..."). Korpus 139.
+
 ## ESBMC som bevisare
 
 [ESBMC](https://github.com/esbmc/esbmc) används med `--silver-prover=esbmc`

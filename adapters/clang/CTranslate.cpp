@@ -299,7 +299,7 @@ class Translator {
       if (const auto* ref = t->getAs<ReferenceType>()) {
         if (!isa<LValueReferenceType>(ref)) return fail("rvalue reference parameter");
         t = ref->getPointeeType();
-        pointer = !t.isConstQualified();  // const T& blir ett värde
+        pointer = !t.isConstant(ctx_);  // const T& blir ett värde
       }
       TRY(ct, cType(t));
       if (pointer) pointers_.insert(p);
@@ -585,6 +585,12 @@ class Translator {
   // Lika värde i hela värdet. compare: bara det som finns (k < size).
   std::optional<std::string> sameValue(QualType t, const std::string& a, const std::string& b, bool compare) {
     t = t.getCanonicalType().getUnqualifiedType();
+    if (const auto* at = ctx_.getAsConstantArrayType(t)) {
+      std::string k = "pork_q" + std::to_string(++loops_);
+      auto v = sameValue(at->getElementType(), a + ".v[" + k + "]", b + ".v[" + k + "]", compare);
+      if (!v) return std::nullopt;
+      return forAll(k, llvm::toString(at->getSize(), 10, false) + "ul", *v);
+    }
     if (const auto* bt = t->getAs<BuiltinType>()) {
       if (bt->isFloatingPoint()) return "(" + a + " == " + b + " || (" + a + " != " + a + " && " + b + " != " + b + "))";
       return "(" + a + " == " + b + ")";
@@ -689,7 +695,7 @@ class Translator {
       const ParmVarDecl* p = fd_.getParamDecl(i);
       std::string path = p->getName().empty() ? "#param" + std::to_string(i) : p->getNameAsString();
       QualType t = p->getType();
-      bool output = t->isReferenceType() && !t->getPointeeType().isConstQualified();
+      bool output = t->isReferenceType() && !t->getPointeeType().isConstant(ctx_);
       std::string a = "pork_a" + std::to_string(i), b = "pork_b" + std::to_string(i);
       if (const auto* spec = constSpanSpec(t.getNonReferenceType())) {
         std::string k = "pork_q" + std::to_string(++loops_);
@@ -756,10 +762,42 @@ class Translator {
       }
       return fail("type " + t.getAsString() + " is not supported");
     }
+    if (const auto* at = ctx_.getAsConstantArrayType(t)) return arrayStruct(*at);
     const TagDecl* tag = t->getAsTagDecl();
     if (const auto* ed = dyn_cast_or_null<EnumDecl>(tag)) return cType(ed->getIntegerType());
     if (const auto* rd = dyn_cast_or_null<CXXRecordDecl>(tag)) return record(*rd);
     return fail("type " + t.getAsString() + " is not supported");
+  }
+
+  // SLV-44: en ägd array T[N] (STN-75) blir `struct pork_arr_<T>_<N> { T v[N]; }`,
+  // ett värde i C som i C++ (kopieras, fält, indata från en nondet-funktion).
+  // Samma struct som span-datan i testramen.
+  Text arrayStruct(const ConstantArrayType& at) {
+    TRY(et, cType(at.getElementType()));
+    std::string n = llvm::toString(at.getSize(), 10, false) + "ul";
+    std::string name = "struct pork_arr_" + mangled(et) + "_" + n;
+    out_.decls.emplace_back(name, name + " {\n  " + et + " v[" + n + "];\n};\n");
+    return name;
+  }
+
+  // a[i] för en ägd array: elementet i structen, med kontrollen 0 <= i < N.
+  Text subscript(const ArraySubscriptExpr& s) {
+    const Expr* base = s.getBase()->IgnoreParens();
+    const auto* decay = dyn_cast<ImplicitCastExpr>(base);
+    if (decay == nullptr || decay->getCastKind() != CK_ArrayToPointerDecay)
+      return fail("subscript of a pointer");
+    const ConstantArrayType* at = ctx_.getAsConstantArrayType(decay->getSubExpr()->getType());
+    if (at == nullptr) return fail("subscript of an array without a known size");
+    TRY(a, expr(decay->getSubExpr()));
+    const Expr* idx = s.getIdx();
+    TRY(i, expr(idx));
+    TRY(it, cType(idx->getType()));
+    std::string n = llvm::toString(at->getSize(), 10, false);
+    std::string cond = idx->getType()->isSignedIntegerOrEnumerationType()
+                           ? "(long long)pork_ix >= 0LL && (long long)pork_ix < " + n + "LL"
+                           : "(unsigned long long)pork_ix < " + n + "ULL";
+    return a + ".v[({ " + it + " pork_ix = " + i + "; __CPROVER_assert(" + cond + ", " +
+           quoted("array index out of bounds") + "); pork_ix; })]";
   }
 
   Text record(const CXXRecordDecl& decl) {
@@ -1412,7 +1450,7 @@ class Translator {
         bool pointer = false;
         if (const auto* ref = t->getAs<ReferenceType>()) {
           t = ref->getPointeeType();
-          pointer = !t.isConstQualified();
+          pointer = !t.isConstant(ctx_);
         }
         TRY(ct, cType(t));
         if (pointer) pointers_.insert(p);
@@ -1467,7 +1505,7 @@ class Translator {
   // Ett argument till en lambda/funktion: adress för T&, annars värdet.
   Text argument(const FunctionDecl& callee, unsigned i, const Expr* arg) {
     const auto* ref = i < callee.getNumParams() ? callee.getParamDecl(i)->getType()->getAs<ReferenceType>() : nullptr;
-    if (ref != nullptr && !ref->getPointeeType().isConstQualified()) return address(arg);
+    if (ref != nullptr && !ref->getPointeeType().isConstant(ctx_)) return address(arg);
     return expr(arg);
   }
 
@@ -1496,7 +1534,7 @@ class Translator {
       if (op == nullptr) return fail("no lambda call operator for " + alts[k].getAsString());
       const auto* ref = op->getParamDecl(0)->getType()->getAs<ReferenceType>();
       std::string slot = v + ".u.a" + std::to_string(k);
-      std::string arg = ref != nullptr && !ref->getPointeeType().isConstQualified() ? "&" + slot : slot;
+      std::string arg = ref != nullptr && !ref->getPointeeType().isConstant(ctx_) ? "&" + slot : slot;
       TRY(call, lambdaCall(*op, *le, var, {arg}));
       out = out.empty() ? call : "(" + v + ".index == " + std::to_string(k) + "ul ? " + call + " : " + out + ")";
     }
@@ -1511,6 +1549,13 @@ class Translator {
   // Antaganden om godtyckliga indata: flyttal ändliga, enums inom sitt intervall.
   std::string assumeValid(QualType t, const std::string& path) {
     t = t.getCanonicalType();
+    if (const auto* at = ctx_.getAsConstantArrayType(t)) {
+      std::string k = "pork_k" + std::to_string(++loops_);
+      std::string inner = assumeValid(at->getElementType(), path + ".v[" + k + "]");
+      if (inner.empty()) return "";
+      std::string n = llvm::toString(at->getSize(), 10, false) + "ul";
+      return "  for (unsigned long " + k + " = 0; " + k + " < " + n + "; ++" + k + ") {\n" + inner + "  }\n";
+    }
     if (const auto* bt = t->getAs<BuiltinType>()) {
       const char* sfx = bt->getKind() == BuiltinType::Float    ? "f"
                         : bt->getKind() == BuiltinType::Double ? "d"
@@ -1685,6 +1730,7 @@ class Translator {
     if (const auto* c = dyn_cast<CharacterLiteral>(e)) return std::to_string(c->getValue());
     if (const auto* d = dyn_cast<DeclRefExpr>(e)) return declRef(*d);
     if (const auto* m = dyn_cast<MemberExpr>(e)) return member(*m);
+    if (const auto* a = dyn_cast<ArraySubscriptExpr>(e)) return subscript(*a);
     if (const auto* u = dyn_cast<UnaryOperator>(e)) return unary(*u);
     if (const auto* b = dyn_cast<BinaryOperator>(e)) {
       if (b->getOpcode() == BO_Cmp || b->isPtrMemOp())
@@ -2074,7 +2120,7 @@ class Translator {
       bool pointer = false;
       if (const auto* ref = t->getAs<ReferenceType>()) {
         t = ref->getPointeeType();
-        pointer = !t.isConstQualified();
+        pointer = !t.isConstant(ctx_);
       }
       if (isConstCharPointer(t)) {  // bara för strängliteraler (StringLiteralArg.hpp)
         name += "__const_char_ptr";
@@ -2089,7 +2135,7 @@ class Translator {
     std::string ret = "void";
     if (!rt->isVoidType()) {
       if (const auto* ref = rt->getAs<ReferenceType>()) {
-        if (!ref->getPointeeType().isConstQualified())
+        if (!ref->getPointeeType().isConstant(ctx_))
           return fail("trusted '" + displayName(callee) + "' returns a non-const reference");
         rt = ref->getPointeeType();
       }
@@ -2197,7 +2243,7 @@ class Translator {
       const auto* ref = callee->getParamDecl(pi)->getType()->getAs<ReferenceType>();
       if (const StringLiteral* lit = stringLiteralArg(c.getArg(i), callee->getParamDecl(pi)->getType())) {
         add(cStringLiteral(*lit));
-      } else if (ref != nullptr && !ref->getPointeeType().isConstQualified()) {
+      } else if (ref != nullptr && !ref->getPointeeType().isConstant(ctx_)) {
         TRY(a, address(c.getArg(i)));
         add(a);
       } else {
@@ -2222,7 +2268,7 @@ class Translator {
       const auto* ref = ctor.getParamDecl(i)->getType()->getAs<ReferenceType>();
       if (const StringLiteral* lit = stringLiteralArg(c.getArg(i), ctor.getParamDecl(i)->getType())) {
         args += ", " + cStringLiteral(*lit);
-      } else if (ref != nullptr && !ref->getPointeeType().isConstQualified()) {
+      } else if (ref != nullptr && !ref->getPointeeType().isConstant(ctx_)) {
         TRY(a, address(c.getArg(i)));
         args += ", " + a;
       } else {
@@ -2509,7 +2555,7 @@ class Translator {
     std::string decl;
     if (const auto* ref = var.getType()->getAs<ReferenceType>()) {
       TRY(ct, cType(ref->getPointeeType()));
-      decl = std::string(ref->getPointeeType().isConstQualified() ? "const " : "") + ct + " *" + x + " = &" + element + ";\n";
+      decl = std::string(ref->getPointeeType().isConstant(ctx_) ? "const " : "") + ct + " *" + x + " = &" + element + ";\n";
       pointers_.insert(&var);
     } else {
       TRY(ct, cType(var.getType()));
@@ -2699,7 +2745,7 @@ class Translator {
           if (isa<CXXOperatorCallExpr>(c) && isa<CXXMethodDecl>(f) && i == 0) continue;
           if (pi >= f->getNumParams()) continue;
           QualType pt = f->getParamDecl(pi)->getType();
-          bool mut = (pt->isReferenceType() || pt->isPointerType()) && !pt->getPointeeType().isConstQualified();
+          bool mut = (pt->isReferenceType() || pt->isPointerType()) && !pt->getPointeeType().isConstant(ctx_);
           if (mut && hits(c->getArg(i))) write("and a call may change what it refers to");
         }
         if (anyOutside && userCode(f) && c != &call) write("and a call to user code may change what it refers to");
@@ -2762,14 +2808,14 @@ class Translator {
         TRY(x, expr(target));
         return ct + " " + name + " = " + x + ";\n";
       }
-      std::string decl = std::string(t.isConstQualified() ? "const " : "") + ct + " *" + name + " = ";
+      std::string decl = std::string(t.isConstant(ctx_) ? "const " : "") + ct + " *" + name + " = ";
       // Egen funktion som returnerar const T&: C-funktionen ger värdet, så
       // referensen blir en kopia. Det är samma program bara om det den
       // refererar inte kan ändras mellan bindningen och en senare användning
       // (SLV-42; Stone kräver det inte, lånemodellen ser bara döda lån).
       if (const auto* call = dyn_cast<CallExpr>(target)) {
         const FunctionDecl* callee = call->getDirectCallee();
-        if (callee != nullptr && t.isConstQualified() && callee->getReturnType()->isLValueReferenceType() &&
+        if (callee != nullptr && t.isConstant(ctx_) && callee->getReturnType()->isLValueReferenceType() &&
             !isTrustedCallee(*callee, sm_)) {
           if (auto why = copyChangesMeaning(vd, *call))
             return fail("const reference '" + vd.getNameAsString() + "' to the result of '" +
@@ -2836,7 +2882,7 @@ class Translator {
         QualType pt = ref->getPointeeType();
         const CXXRecordDecl* prd = pt->getAsCXXRecordDecl();
         if (prd != nullptr && prd->hasDefinition() && prd->getDefinition()->isPolymorphic()) continue;  // port
-        TRY(h, havocInto(pt, "(*" + field + ")", !pt.isConstQualified()));
+        TRY(h, havocInto(pt, "(*" + field + ")", !pt.isConstant(ctx_)));
         out += h;
       } else if (writable) {
         TRY(h, havocInto(f->getType(), field, true));
@@ -2868,7 +2914,7 @@ class Translator {
       bool pointer = false;
       if (const auto* ref = t->getAs<LValueReferenceType>()) {
         t = ref->getPointeeType();
-        pointer = !t.isConstQualified();
+        pointer = !t.isConstant(ctx_);
       }
       TRY(ct, cType(t));
       plist += ", " + ct + (pointer ? "*" : "");
@@ -2884,7 +2930,7 @@ class Translator {
       const auto* ref = md.getParamDecl(pi)->getType()->getAs<ReferenceType>();
       if (const StringLiteral* lit = stringLiteralArg(c.getArg(i), md.getParamDecl(pi)->getType())) {
         args += ", " + cStringLiteral(*lit);
-      } else if (ref != nullptr && !ref->getPointeeType().isConstQualified()) {
+      } else if (ref != nullptr && !ref->getPointeeType().isConstant(ctx_)) {
         TRY(a, address(c.getArg(i)));
         args += ", " + a;
       } else {
@@ -2925,7 +2971,7 @@ class Translator {
     // SLV-41: T& in i *this (STN-76) är en väg som anroparen skriver genom;
     // ett returnerat värde vore inte samma program. (`return *this` som C&,
     // STN-73, översätts redan.)
-    if (const auto* ref = rt->getAs<LValueReferenceType>(); ref != nullptr && !ref->getPointeeType().isConstQualified() &&
+    if (const auto* ref = rt->getAs<LValueReferenceType>(); ref != nullptr && !ref->getPointeeType().isConstant(ctx_) &&
         !returnsOwnClass(fd_))
       return fail("return type " + rt.getAsString() + " (a non-const reference, not translated yet)");
     return cType(rt.getNonReferenceType());
@@ -3008,7 +3054,7 @@ class Translator {
     TRY(v, expr(object));
     nullables_.insert(&vd);
     std::string slot = std::to_string(*k);
-    return std::string(pointee.isConstQualified() ? "const " : "") + ct + " *" + varName(vd) + " = " + v +
+    return std::string(pointee.isConstant(ctx_) ? "const " : "") + ct + " *" + varName(vd) + " = " + v +
            ".index == " + slot + "ul ? &" + v + ".u.a" + slot + " : 0;\n";
   }
 
