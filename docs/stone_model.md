@@ -608,21 +608,21 @@ kan aliasa allt yttre (`pointer_member_direct`).
 eller en parameter är roten "det *this/parametern håller" (`Root::held`), inte "något okänt
 utanför". Inne i funktionen aliasar den som "okänt utanför". I sammanfattningen sparas ett
 returnerat eller lagrat lån av den som `Ret::held` med objektets plats, och hos anroparen
-blir det lånen som operanden håller (`mapRet`, `heldByOperand`). Annars såg anroparen ett
-lån av något okänt utanför: `const char& r = c.cur();` med `c` en lokal `Cursor` över en
-lokal sträng `s` överlevde både `s += ...` och att `s` dog. Skrivningar och tomhet sparas
-fortfarande som "okänt utanför" (`absolute`).
+blir det lånen som operanden håller (`mapRet`, `heldByOperand`). Ett lån av något okänt
+utanför vore inte nog: `const char& r = c.cur();` med `c` en lokal `Cursor` över en lokal
+sträng `s` ska dö både vid `s += ...` och när `s` dör. Skrivningar och tomhet sparas som
+"okänt utanför" (`absolute`).
 
 **Behållare med lånebärande element** (STN-93, korpus 137): en lokal behållare håller en
 lånemängd för alla sina element (`localHolder` godtar ägd lagring under variabeln). Insättning
-(`storedByCall`, nu också för effekten `insert`) lägger till vad argumenten kan ge elementet:
+(`storedByCall`, för effekterna `standard` och `insert`) lägger till vad argumenten kan ge elementet:
 det ett argument av elementtypen håller (`copiesElement`, `value_type`), och annars det
 argumentet betecknar, utom tal, enums och tomma std-objekt som byggs in i element av bara
 inbyggda och std-typer (`scalarCopiedInto`, `stdOnly`; inte `std::reference_wrapper`). Ett
 anrop på en ägare (`ownerOperand`) ger ett resultat som lånar ägd lagring, inte det
-elementen håller. **Hål som hittades:** `std::deque`, `std::list` och `std::map` med vyer
-följde inga lån alls vid insättning (bara effekten `standard` lagrade), och en konverterande
-tilldelning till en lånebärande lokal (`o = s`) ersatte mängden med det strängen höll (inget).
+elementen håller. Insättning i `std::deque`, `std::list` och `std::map` (effekten `insert`)
+följer lånen som för `std::vector`, och en konverterande tilldelning till en lånebärande lokal
+(`o = s`) lägger till det högerledet betecknar i stället för att ersätta mängden (korpus 137).
 En std-behållares egen metod skriver inte genom lånen som elementen eller argumenten håller
 när elementen inte kör användarkod (`elementsRunNoUserCode`, korpus 138), så samma ursprung
 får sättas in flera gånger (`vs.push_back(s); vs.push_back(s);`). Kvar (precision):

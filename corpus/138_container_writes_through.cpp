@@ -3,7 +3,7 @@
 // när elementens kopiering och destruktor inte kör användarkod (std-typer,
 // eller trivialt kopierbara typer med trivial destruktor, STN-93). Samma
 // ursprung får då sättas in flera gånger. Element med egen kod kan skriva
-// genom sina lån, och räknas som förut.
+// genom sina lån, och anropet räknas då som en skrivning genom dem.
 #include <cstddef>
 #include <span>
 #include <string>
