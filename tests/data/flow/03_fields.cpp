@@ -25,3 +25,17 @@ void update_fields(Totals& result, int total, int stamp) {
 void replace_total(Totals& result, int total) {
   result.total = total;
 }
+
+// En initierare läser ett fält som redan är initierat (STN-66 c): y får
+// beroendet från x, och standardinitieraren för z det från y.
+struct Chained {
+  int x;
+  int y;
+  int z = y * 2;
+  int k;
+  // flow: this.k <- b (always written)
+  // flow: this.x <- a (always written)
+  // flow: this.y <- a (always written)
+  // flow: this.z <- a (always written)
+  Chained(int a, int b) : x(a), y(x + 1), k(b) {}
+};

@@ -48,6 +48,33 @@ struct Bounded {
 // expect: silver
 Bounded ok() { return Bounded(10); }
 
+// En initierare läser ett fält som redan är initierat (STN-66 c): i C läser
+// `self->y = self->x + 1;` värdet som raden före skrev.
+struct Chained {
+  int x;
+  int y;
+  int z = y * 2;
+  // rules: SLV-39, STN-66
+  // expect: silver
+  explicit Chained(int a) : x(a), y(x + 1) { PORK_PRE(a > -1000 && a < 1000); }
+};
+
+// rules: SLV-39, SLV-17
+// expect: silver
+int chained() {
+  PORK_POST(int r, r == 12);
+  Chained c(5);
+  return c.z;
+}
+
+struct ChainedOverflow {
+  int x;
+  int y;
+  // rules: SLV-39, STN-66
+  // expect: stone: not silver: arithmetic overflow on signed +
+  explicit ChainedOverflow(int a) : x(a), y(x + 1) {}
+};
+
 // rules: SLV-39
 // expect: stone: not silver: precondition of 'Bounded::Bounded'
 Bounded too_big() { return Bounded(5000); }

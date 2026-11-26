@@ -114,7 +114,9 @@ En funktionsdefinition är Stone om
   översätter inte destruktorer än. En konstruktor (STN-66) granskas som
   en metod som inte är const, efter initieringslistan: initierarna som lokala initierare
   (bas/delegering = anrop), referensfält bara bundna till en referensparameter, ingen
-  initierare får använda `*this`, och alla fält ska vara initierade innan kroppen börjar
+  initierare får använda `*this` utom för att läsa ett aritmetiskt fält eller enumfält som
+  redan är initierat (`: x(a), y(x + 1)`; inte i en implicit konstruktor eller
+  aggregatinitiering), och alla fält ska vara initierade innan kroppen börjar
   (tilldelning först i kroppen stöds inte än). I Silver (SLV-39) blir konstruktorn
   `void C(struct T *self, ...)` med initieringslistan som tilldelningar; invarianten ska gälla
   efteråt men antas inte före; basinitierare med fält översätts inte än.

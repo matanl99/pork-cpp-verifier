@@ -122,9 +122,15 @@ delegating initialiser as a call to that constructor (STN-23);
 (b) a reference field shall be bound directly to a reference parameter of
 the constructor;
 (c) an initialiser shall not use `*this` (no field, no method, no `this`):
-the object is not fully initialised yet. This also holds for a default
-member initialiser used by an implicit constructor or an aggregate
-initialisation (`std::span<const char> v{t};`, STN-92);
+the object is not fully initialised yet. The one exception is reading a
+field of arithmetic or enumeration type of the same class that has already
+been initialised, named without `this->` (`: x(a), y(x + 1)`, `int y = x * 2;`
+used by the constructor): it is a copy of a value, with no reference into the
+object. A field initialised later, a field of class type, a method, `this`
+and a reference or address of a field remain rejected. A default member
+initialiser used by an implicit constructor or an aggregate initialisation
+shall not use `*this` at all (`std::span<const char> v{t};`, STN-92): it is
+analysed where the object is created, where `*this` is not that object;
 (d) every subobject (base or field) shall be initialised by an initialiser,
 a default member initialiser or its own default constructor (an empty base
 has nothing to initialise), so the body starts from a fully

@@ -80,23 +80,88 @@ struct Late {
   explicit Late(int a) { x = a; }
 };
 
-// (c) Initieraren läser ett annat fält.
-struct UsesThis {
+// (c) Initieraren läser ett skalärt fält som redan är initierat: godtas.
+struct ReadsEarlier {
+  int x;
+  int y;
+  // rules: STN-66
+  // expect: stone
+  explicit ReadsEarlier(int a) : x(a), y(x + 1) {}
+};
+
+// (c) Även via standardinitieraren, när konstruktorn använder den.
+struct DefaultReadsEarlier {
+  int x;
+  int y = x * 2;
+  bool positive = y > 0;
+  // rules: STN-66
+  // expect: stone
+  explicit DefaultReadsEarlier(int a) : x(a) {}
+};
+
+// (c) Ett senare fält är inte initierat än.
+struct ReadsLater {
+  int x;
+  int y;
+  // rules: STN-66
+  // expect: not-stone: initializer of 'x' uses *this
+  explicit ReadsLater(int a) : x(y), y(a) {}
+};
+
+// (c) Bara skalära fält: en kopia av ett fält av klasstyp kör kod på
+// objektet (och kan hålla lån in i det).
+struct Inner {
+  int v = 0;
+};
+struct CopiesField {
+  Inner i;
+  Inner j;
+  // rules: STN-66
+  // expect: not-stone: initializer of 'j' uses *this
+  explicit CopiesField(int a) : i{a}, j(i) {}
+};
+
+// (c) Ett anrop av en metod, `this` och en adress till ett fält avvisas.
+struct UsesMethod {
+  int x;
+  int y;
+  // rules: STN-7
+  // expect: stone
+  int get() const { return x; }
+  // rules: STN-66
+  // expect: not-stone: initializer of 'y' uses *this
+  explicit UsesMethod(int a) : x(a), y(get()) {}
+};
+struct UsesExplicitThis {
   int x;
   int y;
   // rules: STN-66
   // expect: not-stone: initializer of 'y' uses *this
-  explicit UsesThis(int a) : x(a), y(x + 1) {}
+  explicit UsesExplicitThis(int a) : x(a), y(this->x) {}
 };
-
-// (c) Även via standardinitieraren.
-struct DefaultUsesThis {
+// rules: STN-12
+// expect: stone
+int read_through(const int& r) { return r; }
+struct BindsField {
   int x;
-  int y = x;
+  int y;
   // rules: STN-66
   // expect: not-stone: initializer of 'y' uses *this
-  explicit DefaultUsesThis(int a) : x(a) {}
+  explicit BindsField(int a) : x(a), y(read_through(x)) {}
 };
+
+// (c) En implicit konstruktor eller aggregatinitiering: standardinitieraren
+// granskas där objektet skapas, och `x` är inte det objektets fält där.
+struct ImplicitReadsEarlier {
+  int x = 1;
+  int y = x + 1;
+};
+// rules: STN-66
+// expect: not-stone: initializer of field 'y' uses *this
+int implicit_reads_earlier() {
+  ImplicitReadsEarlier p;
+  return p.y;
+}
 
 // Initieraren gör det som andra uttryck får göra, och inte mer.
 int global_count = 0;
@@ -211,3 +276,14 @@ int value_init_outer() {
   OuterNS o{};
   return o.w;
 }
+
+#ifdef PORK_RUN
+#include <pork/run.hpp>
+PORK_RUN_CASES(
+    {"ReadsEarlier::ReadsEarlier", [] { ReadsEarlier r(4); return r.y == 5 ? 0 : 1; }},
+    {"DefaultReadsEarlier::DefaultReadsEarlier", [] {
+       DefaultReadsEarlier d(3);
+       return d.y == 6 && d.positive ? 0 : 1;
+     }},
+    {"ReadsLater::ReadsLater", [] { ReadsLater r(4); return r.x == 4 ? 1 : 0; }})
+#endif

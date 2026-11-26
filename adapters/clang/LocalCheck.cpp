@@ -1047,7 +1047,10 @@ class Checker {
       if (f == nullptr || init->isIndirectMemberInitializer())
         return std::string("member initializer of an anonymous struct or union");
       std::string name = "'" + f->getNameAsString() + "'";
-      if (usesThis(e)) return "initializer of " + name + " uses *this";
+      // En standardinitierare som konstruktorn använder granskas här, i
+      // konstruktorns sammanhang, inte som CXXDefaultInitExpr i expr().
+      if (const auto* d = dyn_cast<CXXDefaultInitExpr>(e)) e = d->getExpr();
+      if (usesThisExceptInitialized(e, rd, done)) return "initializer of " + name + " uses *this";
       if (f->getType()->isReferenceType()) {
         const auto* ref = dyn_cast<DeclRefExpr>(e->IgnoreParenImpCasts());
         const auto* p = ref == nullptr ? nullptr : dyn_cast<ParmVarDecl>(ref->getDecl());
@@ -2099,6 +2102,27 @@ class Checker {
     if (const auto* d = dyn_cast<CXXDefaultArgExpr>(s)) return usesThis(d->getExpr());
     for (const Stmt* c : s->children())
       if (usesThis(c)) return true;
+    return false;
+  }
+
+  // STN-66 (c): som usesThis, men läsning av ett aritmetiskt fält eller
+  // enumfält i klassen `rd` som redan är initierat (`initialized`), via
+  // implicit this (`y(x + 1)`), räknas inte: det är en kopia av ett värde.
+  static bool usesThisExceptInitialized(const Stmt* s, const CXXRecordDecl& rd,
+                                        const std::set<const FieldDecl*>& initialized) {
+    if (s == nullptr) return false;
+    if (const auto* c = dyn_cast<ImplicitCastExpr>(s); c != nullptr && c->getCastKind() == CK_LValueToRValue)
+      if (const auto* m = dyn_cast<MemberExpr>(c->getSubExpr()->IgnoreParens()))
+        if (const auto* t = dyn_cast<CXXThisExpr>(m->getBase()); t != nullptr && t->isImplicit())
+          if (const auto* f = dyn_cast<FieldDecl>(m->getMemberDecl());
+              f != nullptr && f->getParent() == &rd && initialized.contains(f) &&
+              (f->getType()->isArithmeticType() || f->getType()->isEnumeralType()))
+            return false;
+    if (isa<CXXThisExpr>(s)) return true;
+    if (const auto* d = dyn_cast<CXXDefaultInitExpr>(s)) return usesThis(d->getExpr());
+    if (const auto* d = dyn_cast<CXXDefaultArgExpr>(s)) return usesThis(d->getExpr());
+    for (const Stmt* c : s->children())
+      if (usesThisExceptInitialized(c, rd, initialized)) return true;
     return false;
   }
 
