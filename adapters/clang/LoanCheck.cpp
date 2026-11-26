@@ -856,8 +856,14 @@ class LoanChecker {
         e = o->getSourceExpr();
         continue;
       }
-      if (const auto* f = dyn_cast<CXXFunctionalCastExpr>(e); f != nullptr && f->getCastKind() == CK_NoOp) {
-        e = f->getSubExpr();
+      // `std::span<const int>(v)`, `static_cast<std::string_view>(s)`: den
+      // konstruktor eller konverteringsfunktion castet innehåller, som implicit
+      // (NoOp: samma värde, t.ex. runt en implicit konvertering).
+      if (const auto* x = dyn_cast<ExplicitCastExpr>(e);
+          x != nullptr && isa<CXXFunctionalCastExpr, CXXStaticCastExpr>(x) &&
+          (x->getCastKind() == CK_NoOp || x->getCastKind() == CK_ConstructorConversion ||
+           x->getCastKind() == CK_UserDefinedConversion)) {
+        e = x->getSubExpr();
         continue;
       }
       return e;
