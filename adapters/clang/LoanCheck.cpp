@@ -856,6 +856,12 @@ class LoanChecker {
         e = o->getSourceExpr();
         continue;
       }
+      // `read({7})`, `const int& r = {y};`: en klammerlista som är ett lvärde
+      // binder referensen till sitt enda element ([dcl.init.list]).
+      if (const auto* l = dyn_cast<InitListExpr>(e); l != nullptr && l->isGLValue() && l->getNumInits() == 1) {
+        e = l->getInit(0);
+        continue;
+      }
       // `std::span<const int>(v)`, `static_cast<std::string_view>(s)`: den
       // konstruktor eller konverteringsfunktion castet innehåller, som implicit
       // (NoOp: samma värde, t.ex. runt en implicit konvertering).
