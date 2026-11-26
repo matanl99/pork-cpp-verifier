@@ -1137,10 +1137,12 @@ class LoanChecker {
            (o.param.isNull() && o.e->isGLValue());
   }
 
-  bool operandLoanBearing(const Operand& o) {
-    QualType t = o.object && o.e->getType()->isPointerType() ? o.e->getType()->getPointeeType() : o.e->getType();
-    return types_.loanBearing(t);
+  // Typen på det operanden betecknar: objektet bakom pekaren för `p->f()`.
+  static QualType operandType(const Operand& o) {
+    return o.object && o.e->getType()->isPointerType() ? o.e->getType()->getPointeeType() : o.e->getType();
   }
+
+  bool operandLoanBearing(const Operand& o) { return types_.loanBearing(operandType(o)); }
 
   // Sammanfattningen av en egen anropad funktion, eller nullptr (std, virtuell,
   // ingen kropp i TU:n, rekursion, eller modellen avvisar den).
@@ -1252,7 +1254,7 @@ class LoanChecker {
       bool nested = !operandLoanBearing(o);
       // En skalär har ingen ägd lagring: resultatet kan bara vara den själv
       // (std::max(a, b) ger a eller b), som en referens bunden till a.
-      bool scalar = byReference(o) && !operandLoanBearing(o) && o.e->getType()->isScalarType();
+      bool scalar = byReference(o) && !operandLoanBearing(o) && operandType(o)->isScalarType();
       for (PlaceRef& r : got) {
         if (scalar) {
           r.exclusive = r.exclusive && !constResult;

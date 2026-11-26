@@ -1,0 +1,10 @@
+type std::vector
+type std::allocator
+std::vector::*
+std::allocator::*
+type std::optional
+std::optional::*
+type std::unique_ptr
+type std::default_delete
+std::unique_ptr::*
+std::make_unique
