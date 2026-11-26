@@ -211,8 +211,8 @@ constructor or move assignment (STN-72).
 STN-13  Statements
 The allowed statements shall be: block, return, if (with init statement and
 condition variable), for, range-for, while, do, switch/case/default, break,
-continue, declarations, expression statements and `throw` of a <stdexcept>
-type (STN-83). The attributes [[likely]], [[unlikely]] and
+continue, declarations, expression statements, the null statement `;` and
+`throw` of a <stdexcept> type (STN-83). The attributes [[likely]], [[unlikely]] and
 [[fallthrough]] shall be allowed on statements: they do not change what the
 program does. The analysis shall reject all others (goto, try/catch, rethrow,
 asm, labels, coroutines, ...).
@@ -260,13 +260,16 @@ as the substituted value (`B ? 1 : 0` in `count<true>` as `true ? 1 : 0`).
 STN-19  Casts
 Numeric conversions (implicit, static_cast, C-style, functional) between
 value types shall be allowed, and pointer to bool and nullptr to pointer
-(STN-39). The analysis shall reject reinterpret_cast, const_cast,
+(STN-39). A cast to void (`(void)x;`, `static_cast<void>(f(x));`) shall be
+allowed as an expression statement, analysed as its operand. The analysis shall reject reinterpret_cast, const_cast,
 dynamic_cast and other casts to or from pointers.
 
 STN-20  Side effects only at statement level
 `++`, `--`, `=` and compound assignment (including struct assignment) shall
 only appear as an expression statement, a for step, or a statement-level
-comma chain, never inside another expression.
+comma chain, never inside another expression. The comma operator itself
+shall only appear as such a chain: inside another expression (`return (a,
+b);`, an initializer, a condition) the analysis shall reject it.
 
 STN-21  Calls that modify their arguments
 A call with a `T&` argument or a non-const object shall only appear as an
@@ -351,7 +354,8 @@ as a side effect.
 
 STN-29  String literal arguments
 A string literal passed directly to a `const char*` parameter shall be
-allowed; no other use of the pointer.
+allowed; no other use of the array a literal denotes (`&"abc"[0]`). Other
+pointers, `nullptr` among them, are loan values (STN-39, STN-19).
 
 STN-30  Default arguments
 A default argument shall be analysed at the call site, as part of the

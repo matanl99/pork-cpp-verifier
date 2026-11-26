@@ -2060,6 +2060,12 @@ class Checker {
       if (b->isPtrMemOp()) return "unsupported binary operator: pointer-to-member";
       if (b->isAssignmentOp())  // =, +=, -= osv. (bara tillåtna som egen sats)
         return "side effect inside expression: " + b->getOpcodeStr().str();
+      // STN-18/20: komma bara som kedja av satser (exprStmt), inte i ett uttryck.
+      // Operanderna först: deras skäl (en sidoeffekt) säger mer.
+      if (b->getOpcode() == BO_Comma) {
+        if (auto r = all(expr(b->getLHS()), expr(b->getRHS()))) return r;
+        return std::string("comma operator inside an expression");
+      }
       // Pekare: bara == och != (nullptr eller samma objekt). Aritmetik och
       // ordning (<, >) är inte lån utan adresser.
       if ((b->getLHS()->getType()->isPointerType() || b->getRHS()->getType()->isPointerType()) &&
