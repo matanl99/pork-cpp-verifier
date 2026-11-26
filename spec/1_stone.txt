@@ -847,7 +847,13 @@ holds the container's set. A reference, pointer or iterator to an element
 borrows the container's storage, not what the element holds. An assignment
 to a loan-bearing local from a value of another type (`o = s` for a
 `std::optional<std::string_view>`) shall add what the value denotes; only a
-copy or move of the same type replaces the set.
+copy or move of the same type replaces the set. A member function of a std
+container does not write through the loans its elements or arguments hold
+when building, copying, moving and destroying the elements runs no user code:
+for the object and for an argument copied in as an element, the element type
+is built only of std types or is trivially copyable with a trivial destructor;
+for other arguments (given to an element's constructor, as in `emplace_back`)
+it is built only of std types. Otherwise such a call may write through them.
 
 STN-95  References that survive insertion
 A loan of an element, or of what an element owns, that a local reference or

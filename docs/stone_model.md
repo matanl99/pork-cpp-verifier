@@ -619,8 +619,11 @@ anrop på en ägare (`ownerOperand`) ger ett resultat som lånar ägd lagring, i
 elementen håller. **Hål som hittades:** `std::deque`, `std::list` och `std::map` med vyer
 följde inga lån alls vid insättning (bara effekten `standard` lagrade), och en konverterande
 tilldelning till en lånebärande lokal (`o = s`) ersatte mängden med det strängen höll (inget).
-Kvar (precision): `vs.push_back(s); vs.push_back(s);` avvisas som överlapp, eftersom en
-`push_back` antas kunna skriva genom elementens lån.
+En std-behållares egen metod skriver inte genom lånen som elementen eller argumenten håller
+när elementen inte kör användarkod (`elementsRunNoUserCode`, korpus 138), så samma ursprung
+får sättas in flera gånger (`vs.push_back(s); vs.push_back(s);`). Kvar (precision):
+`m.emplace(1, v)` två gånger med en `std::vector<int>& v` och `std::map<int, std::span<int>>`
+avvisas, eftersom forwarding-argumentet räknas som skrivet.
 
 Inom en TU. Över TU:er (sammanfattningen i `FunctionFacts`, fixpunkt i kärnan) är nästa
 steg om anrop mellan filer visar sig behöva det; till dess får de standarden.

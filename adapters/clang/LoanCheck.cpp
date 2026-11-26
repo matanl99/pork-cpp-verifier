@@ -1699,6 +1699,17 @@ class LoanChecker {
         // genom de exklusiva lånen; sammanfattningar säger när det inte händer.
         bool writesThrough = own != nullptr ? ownThrough[k] != 0
                             : effect == Effect::standard || effect == Effect::insert;
+        // En std-behållares egen metod kopierar, flyttar och förstör element men
+        // skriver inte genom det de lånar, om elementen inte kör användarkod.
+        // Ett argument byggs in i ett element (kopieras, eller ges till dess
+        // konstruktor): utan användarkod skrivs inget genom dess lån.
+        if (own == nullptr && md != nullptr && inStd(*md) && !ops.empty() && ownerOperand(ops.front())) {
+          QualType container = operandType(ops.front());
+          QualType element = valueType(container);
+          if (o.object ? elementsRunNoUserCode(element)
+                       : stdOnly(element) || (elementsRunNoUserCode(element) && copiesElement(container, o.e->getType())))
+            writesThrough = false;
+        }
         std::vector<PlaceRef> excl;
         for (const PlaceRef& r : held)
           if (r.exclusive) excl.push_back(r);
@@ -2128,6 +2139,18 @@ class LoanChecker {
     const CXXRecordDecl* rd = a->getAsCXXRecordDecl();
     bool emptyStd = rd != nullptr && rd->hasDefinition() && rd->getDefinition()->isEmpty() && inStd(*rd);
     return (a->isArithmeticType() || a->isEnumeralType() || emptyStd) && stdOnly(built);
+  }
+
+  // Kopiering, flytt och destruktion av typen kör ingen användarkod: en
+  // std-typ av sådana (stdOnly), eller trivialt kopierbar med trivial
+  // destruktor.
+  bool elementsRunNoUserCode(QualType t) const {
+    if (t.isNull()) return false;
+    if (stdOnly(t)) return true;
+    QualType c = t.getCanonicalType();
+    const CXXRecordDecl* rd = c->getAsCXXRecordDecl();
+    return rd != nullptr && rd->hasDefinition() && c.isTriviallyCopyableType(fd_.getASTContext()) &&
+           rd->getDefinition()->hasTrivialDestructor();
   }
 
   // `value_type` i en behållare (std::map: pair<const K, V>).
