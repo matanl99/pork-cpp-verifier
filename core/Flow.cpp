@@ -13,6 +13,18 @@ bool within(const std::string& p, const std::string& a) {  // p ligger i a (elle
   return p == a || (p.size() > a.size() && p.starts_with(a) && (p[a.size()] == '.' || p[a.size()] == '['));
 }
 
+// Platserna i `vals` som ligger i p (p själv och p.x, p[*] ...): ett
+// sammanhängande intervall i den sorterade mappen, från lower_bound(p) så länge
+// nyckeln börjar med p (p2 och pa börjar också med p men ligger inte i p).
+template <class Map, class F>
+void forEachWithin(Map& vals, const std::string& p, F&& f) {
+  for (auto it = vals.lower_bound(p); it != vals.end() && it->first.starts_with(p);) {
+    auto next = std::next(it);
+    if (within(it->first, p)) f(it);
+    it = next;
+  }
+}
+
 std::string rootOf(const std::string& p) {
   return p.substr(0, std::min(p.find('.'), p.find('[')));
 }
@@ -86,13 +98,16 @@ class Analysis {
   // (lokaler har inget), plus det som skrivits inuti p.
   Deps read(const State& s, const std::string& p) const {
     Deps d;
-    const std::string* best = nullptr;
-    for (const auto& [k, v] : s.vals)
-      if (within(p, k) && (best == nullptr || k.size() > best->size())) best = &k;
-    if (best != nullptr) d = s.vals.at(*best);
+    // Den närmaste omslutande platsen: p själv eller det längsta prefixet av p
+    // som slutar före en '.' eller '['.
+    auto best = s.vals.find(p);
+    for (std::size_t i = p.size(); best == s.vals.end() && i-- > 0;)
+      if (p[i] == '.' || p[i] == '[') best = s.vals.find(p.substr(0, i));
+    if (best != s.vals.end()) d = best->second;
     else if (inputs_.contains(rootOf(p))) d.insert(p);
-    for (const auto& [k, v] : s.vals)
-      if (k != p && within(k, p)) d.insert(v.begin(), v.end());
+    forEachWithin(s.vals, p, [&](auto it) {
+      if (it->first != p) d.insert(it->second.begin(), it->second.end());
+    });
     return d;
   }
 
@@ -114,8 +129,7 @@ class Analysis {
       replace = false;
       sure = false;
     }
-    if (replace)
-      std::erase_if(s.vals, [&](const auto& kv) { return within(kv.first, p); });
+    if (replace) forEachWithin(s.vals, p, [&](auto it) { s.vals.erase(it); });
     s.vals[p] = std::move(d);
     s.written.insert(p);
     if (sure) s.always.insert(p);
