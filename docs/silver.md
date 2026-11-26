@@ -122,8 +122,8 @@ garanterar att vektorn inte ändras medan referensen lever, så pekaren är gilt
 `std::string` översätts som en `std::vector<char>` med samma gräns (se
 [den svenska referensen](reference.sv.md#stdstring)), och `std::variant` beskrivs [nedan](#stdvariant-get_if-och-lambdor).
 Av standardbibliotekets typer översätts bara `std::optional`, `std::vector`, `std::string`,
-`std::variant` och `std::span<const T>`. Andra betrodda typer (t.ex. `std::map`,
-`std::array`, `std::unique_ptr`) ger "trusted type ... is not supported yet".
+`std::variant`, `std::span<const T>` och `std::array` ([nedan](#ägda-arrayer-slv-44)). Andra
+betrodda typer (t.ex. `std::map`, `std::unique_ptr`) ger "trusted type ... is not supported yet".
 
 ## Ägda arrayer (SLV-44)
 
@@ -163,8 +163,26 @@ och raderna i en nästlad array (`for (const auto& row : m) for (int x : row)`).
 Beroendeoraklet (`--flow-oracle`) delar en array i löv `a[*]` med "för alla k < N", som en
 sekvens, så att namnen är flödets (`tests/data/flow/13_arrays.cpp`).
 
-Inte än: element som byggs av en egen konstruktor och `std::array` ("cannot translate to C:
-..."). Korpus 139.
+Lokala referenser till element (`int& r = a[i]`) blir pekare, med kontrollen i indexet
+(`elementAddress`). ESBMC rapporterar då adressberäkningen ("pointer arithmetic out of bounds").
+
+**`std::array<T, N>`** (N > 0, `ownedArray`) är samma struct som `T[N]`, så indata, kopior,
+fält, antaganden, beroendeoraklet och range-for är desamma. Initieraren `std::array<int, 3>{1, 2}`
+är en yttre lista med en inre `int[3]`-lista (fältet `_M_elems`): den inre är structen. En
+konstant tabell (`static constexpr std::array`) är dess enda fält. Metoderna (`arrayCall`):
+
+| C++ | C |
+|---|---|
+| `a[i]`, `a.at(i)` | `a.v[i]` med kontrollen `i < N` ("precondition of 'std::array::operator[]': index < size()") |
+| `a.front()`, `a.back()` | `a.v[0]`, `a.v[N - 1]` |
+| `a.size()`, `a.max_size()`, `a.empty()` | `N`, `N`, `0` |
+| `a.fill(x)` | en loop över `v[0..N)` |
+
+Modellen redovisas som antagandena om `std::array` ur trust-filen, som för `std::vector`.
+Korpus 140.
+
+Inte än: element som byggs av en egen konstruktor, `std::array<T, 0>`, iteratorer och `data()`,
+och fria funktioner (`==`, `std::get`, `std::swap`: "no contract for ..."). Korpus 139.
 
 ## ESBMC som bevisare
 

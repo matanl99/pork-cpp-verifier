@@ -168,6 +168,12 @@ const ClassTemplateSpecializationDecl* vectorSpec(const CXXRecordDecl* rd) {
 const ClassTemplateSpecializationDecl* vectorSpec(QualType t) {
   return vectorSpec(t.getNonReferenceType().getCanonicalType()->getAsCXXRecordDecl());
 }
+const ClassTemplateSpecializationDecl* stdArraySpec(QualType t) {
+  const auto* spec =
+      dyn_cast_or_null<ClassTemplateSpecializationDecl>(t.getNonReferenceType().getCanonicalType()->getAsCXXRecordDecl());
+  if (spec == nullptr || spec->getSpecializedTemplate()->getQualifiedNameAsString() != "std::array") return nullptr;
+  return spec;
+}
 // std::basic_string<char> (std::string): modelleras som en vektor av char.
 const ClassTemplateSpecializationDecl* stringSpec(const CXXRecordDecl* rd) {
   const auto* spec = dyn_cast_or_null<ClassTemplateSpecializationDecl>(rd);
@@ -585,7 +591,7 @@ class Translator {
   // Lika värde i hela värdet. compare: bara det som finns (k < size).
   std::optional<std::string> sameValue(QualType t, const std::string& a, const std::string& b, bool compare) {
     t = t.getCanonicalType().getUnqualifiedType();
-    if (const auto* at = ctx_.getAsConstantArrayType(t)) {
+    if (const auto* at = ownedArray(t)) {
       std::string k = "pork_q" + std::to_string(++loops_);
       auto v = sameValue(at->getElementType(), a + ".v[" + k + "]", b + ".v[" + k + "]", compare);
       if (!v) return std::nullopt;
@@ -637,7 +643,7 @@ class Translator {
                     std::vector<OracleLeaf>& out) {
     t = t.getCanonicalType().getUnqualifiedType();
     // SLV-44: elementen i en ägd array heter `a[*]`, som i en sekvens (flödets namn).
-    if (const ConstantArrayType* at = ctx_.getAsConstantArrayType(t)) {
+    if (const ConstantArrayType* at = ownedArray(t)) {
       std::vector<OracleLeaf> inner;
       std::string k = "pork_q" + std::to_string(++loops_);
       if (!oracleLeaves(at->getElementType(), path + "[*]", a + ".v[" + k + "]", b + ".v[" + k + "]", output, inner))
@@ -772,11 +778,65 @@ class Translator {
       }
       return fail("type " + t.getAsString() + " is not supported");
     }
-    if (const auto* at = ctx_.getAsConstantArrayType(t)) return arrayStruct(*at);
+    if (const auto* at = ownedArray(t)) return arrayStruct(*at);
+    if (stdArraySpec(t) != nullptr) return fail("type " + t.getAsString() + " is not supported");  // N == 0
     const TagDecl* tag = t->getAsTagDecl();
     if (const auto* ed = dyn_cast_or_null<EnumDecl>(tag)) return cType(ed->getIntegerType());
     if (const auto* rd = dyn_cast_or_null<CXXRecordDecl>(tag)) return record(*rd);
     return fail("type " + t.getAsString() + " is not supported");
+  }
+
+  // En ägd array T[N], eller std::array<T, N> med N > 0 (samma C-struct).
+  const ConstantArrayType* ownedArray(QualType t) const {
+    t = t.getNonReferenceType().getCanonicalType();
+    if (const auto* at = ctx_.getAsConstantArrayType(t)) return at;
+    const auto* spec = stdArraySpec(t);
+    if (spec == nullptr || spec->getTemplateArgs().size() != 2) return nullptr;
+    const TemplateArgument& n = spec->getTemplateArgs()[1];
+    if (n.getKind() != TemplateArgument::Integral || n.getAsIntegral() == 0) return nullptr;
+    QualType arr = ctx_.getConstantArrayType(spec->getTemplateArgs()[0].getAsType(),
+                                             llvm::APInt(64, n.getAsIntegral().getZExtValue()), nullptr,
+                                             ArraySizeModifier::Normal, 0);
+    return ctx_.getAsConstantArrayType(arr);
+  }
+
+  // Index i i en ägd array med N element: `({ T pork_ix = i; assert(0 <= pork_ix < N); pork_ix; })`.
+  Text checkedIndex(const Expr* idx, const llvm::APInt& size, const std::string& message) {
+    TRY(i, expr(idx));
+    TRY(it, cType(idx->getType()));
+    std::string n = llvm::toString(size, 10, false);
+    std::string cond = idx->getType()->isSignedIntegerOrEnumerationType()
+                           ? "(long long)pork_ix >= 0LL && (long long)pork_ix < " + n + "LL"
+                           : "(unsigned long long)pork_ix < " + n + "ULL";
+    return "({ " + it + " pork_ix = " + i + "; __CPROVER_assert(" + cond + ", " + quoted(message) + "); pork_ix; })";
+  }
+
+  // std::array<T, N>: operator[] och at med kontroll, front/back (N > 0),
+  // size/max_size/empty och fill. Objektet är structen med v[N].
+  Text arrayCall(const CallExpr& c, const CXXMethodDecl& md, const Expr* object, unsigned first) {
+    std::string member = memberName(md);
+    const ConstantArrayType* at = ownedArray(object->getType());
+    if (at == nullptr) return fail("std::array::" + member + " on an empty array");
+    std::string n = llvm::toString(at->getSize(), 10, false);
+    unsigned nargs = c.getNumArgs() - first;
+    TRY(o, expr(object));
+    if ((member == "size" || member == "max_size") && nargs == 0) return n + "ul";
+    if (member == "empty" && nargs == 0) return std::string("0");
+    if (member == "front" && nargs == 0) return o + ".v[0]";
+    if (member == "back" && nargs == 0) return o + ".v[" + n + "ul - 1]";
+    if ((member == "operator[]" || member == "at") && nargs == 1) {
+      TRY(k, checkedIndex(c.getArg(first), at->getSize(),
+                          "precondition of 'std::array::" + member + "': index < size()"));
+      return o + ".v[" + k + "]";
+    }
+    if (member == "fill" && nargs == 1) {
+      if (!isPath(object)) return fail("std::array::fill on a temporary");
+      TRY(x, expr(c.getArg(first)));
+      TRY(et, cType(at->getElementType()));
+      return "({ " + et + " pork_fx = " + x + "; for (unsigned long pork_fk = 0; pork_fk < " + n +
+             "ul; ++pork_fk) " + o + ".v[pork_fk] = pork_fx; })";
+    }
+    return fail("std::array::" + member + " (not translated yet)");
   }
 
   // SLV-44: en ägd array T[N] (STN-75) blir `struct pork_arr_<T>_<N> { T v[N]; }`,
@@ -799,15 +859,8 @@ class Translator {
     const ConstantArrayType* at = ctx_.getAsConstantArrayType(decay->getSubExpr()->getType());
     if (at == nullptr) return fail("subscript of an array without a known size");
     TRY(a, expr(decay->getSubExpr()));
-    const Expr* idx = s.getIdx();
-    TRY(i, expr(idx));
-    TRY(it, cType(idx->getType()));
-    std::string n = llvm::toString(at->getSize(), 10, false);
-    std::string cond = idx->getType()->isSignedIntegerOrEnumerationType()
-                           ? "(long long)pork_ix >= 0LL && (long long)pork_ix < " + n + "LL"
-                           : "(unsigned long long)pork_ix < " + n + "ULL";
-    return a + ".v[({ " + it + " pork_ix = " + i + "; __CPROVER_assert(" + cond + ", " +
-           quoted("array index out of bounds") + "); pork_ix; })]";
+    TRY(k, checkedIndex(s.getIdx(), at->getSize(), "array index out of bounds"));
+    return a + ".v[" + k + "]";
   }
 
   Text record(const CXXRecordDecl& decl) {
@@ -1560,7 +1613,7 @@ class Translator {
   // Antaganden om godtyckliga indata: flyttal ändliga, enums inom sitt intervall.
   std::string assumeValid(QualType t, const std::string& path) {
     t = t.getCanonicalType();
-    if (const auto* at = ctx_.getAsConstantArrayType(t)) {
+    if (const auto* at = ownedArray(t)) {
       std::string k = "pork_k" + std::to_string(++loops_);
       std::string inner = assumeValid(at->getElementType(), path + ".v[" + k + "]");
       if (inner.empty()) return "";
@@ -1696,6 +1749,11 @@ class Translator {
         parts += (parts.empty() ? "" : ", ") + x;
       }
       return "(" + ct + "){{" + parts + "}}";
+    }
+    if (v.isStruct() && stdArraySpec(t) != nullptr) {
+      const ConstantArrayType* at = ownedArray(t);
+      if (at == nullptr || v.getStructNumFields() != 1) return fail("constant of type " + t.getAsString() + " is not supported");
+      return constant(v.getStructField(0), QualType(at, 0));
     }
     if (v.isStruct()) {
       const CXXRecordDecl* rd = t.getCanonicalType()->getAsCXXRecordDecl();
@@ -2241,6 +2299,8 @@ class Translator {
         return spanCall(c, *md, object, first);
       if (const auto* spec = variantSpec(md->getParent()))
         return variantCall(c, *md, object, first, *spec);
+      if (stdArraySpec(ctx_.getCanonicalTagType(md->getParent())) != nullptr)
+        return arrayCall(c, *md, object, first);
     }
 
     std::string name;
@@ -2441,6 +2501,12 @@ class Translator {
   Text initList(const InitListExpr& il) {
     if (il.isTransparent()) return expr(il.getInit(0));
     QualType t = il.getType();
+    // std::array<T, N>{...}: listan för det enda fältet (T[N]) är structen.
+    if (stdArraySpec(t) != nullptr && ownedArray(t) != nullptr) {
+      if (il.getNumInits() == 0) return zero(t);
+      if (il.getNumInits() != 1) return fail("initializer list of " + t.getAsString());
+      return expr(il.getInit(0));
+    }
     if (const ConstantArrayType* at = ctx_.getAsConstantArrayType(t)) {
       // SLV-44: `{1, 2}` för int[3]. Saknade element är fyllnaden; är den
       // värdeinitiering räcker C:s egen nollfyllnad.
@@ -2613,7 +2679,7 @@ class Translator {
     const Expr* range = rf.getRangeInit();
     // SLV-44: en ägd array (variabel, parameter, fält, konstant tabell, rad i
     // en nästlad array). Antalet varv är N ur typen.
-    if (const ConstantArrayType* arr = ctx_.getAsConstantArrayType(range->getType())) {
+    if (const ConstantArrayType* arr = ownedArray(range->getType())) {
       if (!isPath(range)) return fail("range-for over this expression");
       TRY(v, expr(range));
       const VarDecl& var = *rf.getLoopVariable();
@@ -2687,6 +2753,13 @@ class Translator {
   // back i en std::vector, *o / o.value() i en std::optional. Objektet är en
   // väg (Stones lån), så adressen är stabil så länge referensen lever.
   std::expected<std::pair<std::string, std::string>, std::string> elementAddress(const Expr* e) {
+    // SLV-44: `int& r = a[i]` i en ägd array; kontrollen sitter i indexet.
+    if (const auto* sub = dyn_cast<ArraySubscriptExpr>(e)) {
+      const auto* decay = dyn_cast<ImplicitCastExpr>(sub->getBase()->IgnoreParens());
+      if (decay == nullptr || !isPath(decay->getSubExpr())) return fail("local reference into a temporary");
+      TRY(x, subscript(*sub));
+      return std::pair{std::string(), "&" + x};
+    }
     const auto* c = dyn_cast<CallExpr>(e);
     const auto* md = c ? dyn_cast_or_null<CXXMethodDecl>(c->getDirectCallee()) : nullptr;
     if (md == nullptr || !md->isInstance()) return fail("local reference to this expression is not supported");
@@ -2706,6 +2779,11 @@ class Translator {
       return std::pair{"__CPROVER_assert(" + o + ".has, " +
                            quoted("precondition of 'std::optional::" + member + "': has_value()") + "); ",
                        "&" + o + ".v"};
+    if (stdArraySpec(ctx_.getCanonicalTagType(md->getParent())) != nullptr &&
+        (member == "operator[]" || member == "at" || member == "front" || member == "back")) {
+      TRY(x, arrayCall(*c, *md, object, first));
+      return std::pair{std::string(), "&" + x};
+    }
     if (const auto* seqSpec = sequenceSpec(md->getParent())) {
       const std::string seq = sequenceName(*seqSpec);
       if ((member == "front" || member == "back") && nargs == 0)

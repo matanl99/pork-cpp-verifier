@@ -301,6 +301,24 @@ int static_local_table(unsigned i) {
   return corners[i].x + corners[i].y;
 }
 
+// En lokal referens till ett element blir en pekare.
+// rules: SLV-44
+// expect: silver
+int element_ref(int (&a)[3]) {
+  int& r = a[2];
+  r = 8;
+  assert(a[2] == 8);
+  return r;
+}
+
+// rules: SLV-44
+// expect: stone: not silver: array index out of bounds
+// expect[esbmc]: stone: not silver: pointer arithmetic out of bounds
+int element_ref_any(const int (&a)[3], unsigned i) {
+  const int& r = a[i];
+  return r;
+}
+
 // --- range-for ----------------------------------------------------------------
 
 // rules: SLV-44
@@ -392,6 +410,7 @@ PORK_RUN_CASES(
     {"default_elements", [] { return default_elements() == 7 ? 0 : 1; }},
     {"name_char", [] { return name_char(1) == 'b' ? 0 : 1; }},
     {"static_local_table", [] { return static_local_table(2) == 1 ? 0 : 1; }},
+    {"element_ref", [] { int v[3] = {}; return element_ref(v) == 8 ? 0 : 1; }},
     {"range_sum", [] { int v[4] = {1, 2, 3, 4}; return range_sum(v) == 10 ? 0 : 1; }},
     {"range_values", [] { return range_values() == 6 ? 0 : 1; }},
     {"range_clear", [] { int v[3] = {1, 2, 3}; range_clear(v); return v[1] == 0 ? 0 : 1; }},

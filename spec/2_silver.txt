@@ -253,6 +253,14 @@ type), also for elements built by an implicit default constructor. A
 constant table (a `const` array with constant initialization, also a static
 local constant) is its value. A range-for over an owned array (a variable,
 parameter, field, constant table or row of a nested array) shall run N
-times, the loop variable a copy of or a reference to element k. Not
-translated yet: elements built by a user-provided constructor and
-`std::array`: `not silver: cannot translate to C: ...`.
+times, the loop variable a copy of or a reference to element k. A local
+reference to an element is a pointer to it, checked like the subscript.
+`std::array<T, N>` with N > 0 shall be translated as the same struct as
+`T[N]`; `operator[]` and `at` shall check `index < size()` (`not silver:
+precondition of 'std::array::operator[]': index < size()`; `at` throws,
+SLV-43), and `front`, `back`, `size`, `max_size`, `empty` and `fill` are
+modelled. The model is reported as the assumptions on `std::array` from the
+trust file, as for std::vector. Not translated yet: elements built by a
+user-provided constructor, `std::array<T, 0>`, iterators and `data()`, and
+free functions on `std::array` (`==`, `std::get`, `std::swap`): `not silver:
+cannot translate to C: ...` or `no contract for ...`.
