@@ -318,6 +318,11 @@ LoanRule libraryRuleImpl(const LoanSummaries& lib, const FunctionDecl* fd) {
   return lib.find(q).value_or(LoanRule{});
 }
 
+// Hur en skrivning ändrar en behållare: elementen behåller sina värden
+// (std::unique_ptr, STN-91), eller flyttas inte alls (STN-95).
+constexpr unsigned char kKeepsPointees = 1;
+constexpr unsigned char kKeepsAddresses = 2;
+
 // --- Sammanfattningar av egna funktioner -------------------------------------
 //
 // Härledda ur kroppen. Plats 0 = objektet (*this), plats i+1 = parameter i;
@@ -329,6 +334,10 @@ using Path = std::vector<const FieldDecl*>;
 struct Summary {
   bool known = false;
   std::set<std::pair<unsigned, Path>> writes;
+  // Vad som gäller för alla skrivningar till en plats i `writes` (bitar, se
+  // kKeepsPointees/kKeepsAddresses): saknas platsen här är det en vanlig
+  // skrivning. Anroparen ändrar platsen på samma sätt (STN-91, STN-95).
+  std::map<std::pair<unsigned, Path>, unsigned char> keeps;
   std::set<Place> absoluteWrites;
   struct Ret {
     int slot;     // -1: `place` är absolut
@@ -676,7 +685,7 @@ class LoanChecker {
     return false;
   }
 
-  void recordWrite(const Place& p) {
+  void recordWrite(const Place& p, unsigned char keeps) {
     std::optional<int> slot = slotOf(p.root);
     if (!slot) return;
     if (throughPointerField(p.path)) {
@@ -685,7 +694,14 @@ class LoanChecker {
     }
     if (*slot == -2) record_.known = false;
     else if (*slot == -1) record_.absoluteWrites.insert(p);
-    else record_.writes.insert({static_cast<unsigned>(*slot), p.path});
+    else {
+      std::pair<unsigned, Path> key{static_cast<unsigned>(*slot), p.path};
+      bool first = record_.writes.insert(key).second;
+      auto it = record_.keeps.find(key);
+      unsigned char now = first ? keeps : it == record_.keeps.end() ? 0 : (it->second & keeps);
+      if (now != 0) record_.keeps[key] = now;
+      else record_.keeps.erase(key);
+    }
   }
 
   // Ett lån i sammanfattningens form (relativt en plats, eller absolut).
@@ -756,7 +772,7 @@ class LoanChecker {
   // av iteratorer och objekt, dör.
   void change(const Place& p, const Stmt* at, const State& s, bool keepsPointees = false,
               bool keepsAddresses = false) {
-    if (checking_) recordWrite(p);
+    if (checking_) recordWrite(p, (keepsPointees ? kKeepsPointees : 0) | (keepsAddresses ? kKeepsAddresses : 0));
     if (!checking_ || error_) return;
     for (const auto& [id, holder] : s.heldOutside)
       if (mayInvalidate(p, loans_[id].place) &&
@@ -1477,6 +1493,7 @@ class LoanChecker {
     // Egen funktion med sammanfattning: exakt vad den ändrar, per operand.
     const Summary* own = isa<CallExpr>(call) ? ownSummary(fd) : nullptr;
     std::vector<std::vector<PlaceRef>> ownChanges(ops.size());
+    std::vector<std::vector<unsigned char>> ownKeeps(ops.size());  // parallellt med ownChanges
     std::vector<char> ownDirect(ops.size(), 0), ownThrough(ops.size(), 0);
     if (own != nullptr) {
       for (const auto& [slot, path] : own->writes)
@@ -1486,6 +1503,8 @@ class LoanChecker {
           std::size_t k = static_cast<std::size_t>(o - ops.data());
           (viaHeld ? ownThrough : ownDirect)[k] = 1;
           ownChanges[k].insert(ownChanges[k].end(), m.begin(), m.end());
+          auto kp = own->keeps.find({slot, path});
+          ownKeeps[k].insert(ownKeeps[k].end(), m.size(), kp == own->keeps.end() ? 0 : kp->second);
         }
     }
     // Operanderna som kan nå samma objekt: referensoperander (det de betecknar)
@@ -1727,7 +1746,10 @@ class LoanChecker {
       if (anyWritten && !stdCallee) s.outsideEmpty = true;
     }
     if (own != nullptr) {
-      for (const auto& c : ownChanges) change(c, call, s);
+      for (std::size_t k = 0; k < ownChanges.size(); ++k)
+        for (std::size_t i = 0; i < ownChanges[k].size(); ++i)
+          change(ownChanges[k][i].place, call, s, (ownKeeps[k][i] & kKeepsPointees) != 0,
+                 (ownKeeps[k][i] & kKeepsAddresses) != 0);
       for (const Place& p : own->absoluteWrites) change(p, call, s);
       // STN-93: lånen den anropade lagrar i sina operander.
       for (const Summary::Store& st : own->stores) {

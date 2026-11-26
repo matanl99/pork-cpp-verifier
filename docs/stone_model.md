@@ -567,6 +567,9 @@ oavsett ordning i filen). Sammanfattningen är två mängder:
 - **ändrar**: platser relativt `*this` (plats 0) och parametrarna (plats i+1), till exempel
   `0: players` eller `1: [*].wind` (`[*]` först = det en pekare/iterator/lambda pekar på);
   plus absoluta platser (målet för en referensmedlem eller ett pekarfält, något okänt yttre).
+  För varje ändrad plats också vad som gäller för *alla* ändringar dit (`Summary::keeps`):
+  elementen behåller sina värden (STN-91) eller flyttas inte alls (STN-95). En enda annan
+  ändring av platsen (`clear`, `erase`, en annan gren) gör den till en vanlig ändring.
 - **returen lånar**: samma slags platser, med exklusiv/delad.
 
 Vid anropet översätts platserna till anroparens operander. Ändringarna ersätter standarden
@@ -632,8 +635,8 @@ Utan regel (standarden): `vector`/`string`-insättning (omallokering) och insät
 `insert invalidatesIterators` (STN-95): elementen flyttas inte, så ett lån som en lokal
 referens eller pekare håller lever, medan lån som iteratorer och andra lånebärande värden
 håller dör (`holdsAddress`, `change(..., keepsAddresses)` i LoanCheck). Skrivningen spelas
-in i sammanfattningen, så en egen funktion som gör `d.push_back(x)` avslutar alla lån hos
-anroparen.
+in i sammanfattningen med samma slag, så en egen funktion som bara gör `d.push_back(x)`
+behåller referenserna hos anroparen men inte iteratorerna.
 
 **Mätning**: korpusen 627 överens, 0 bara modellen, 167 bara reglerna. Nytt "bara
 reglerna": insättning i en `set` medan den itereras (`49_set_insert.cpp`, `51_loan_model.cpp`),

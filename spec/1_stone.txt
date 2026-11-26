@@ -786,8 +786,11 @@ existing elements keep their values ([sequence.reqmts]), and a move keeps the
 pointer ([unique.ptr.single.ctor]), so nothing they own is destroyed. A loan
 of the element itself (`auto& p = v[0];`) ends, as does a loan of anything
 through a call that destroys or replaces an element (erase, clear, pop_back,
-resize, `v[0] = ...`, `v[0].reset()`) or a call of a user function that
-changes the container (its summary says that it changes it, not how). Where
+resize, `v[0] = ...`, `v[0].reset()`). A call of a user function in the
+translation unit counts as such a call when every change it makes to the
+place (also through its own calls) is one that keeps the values: its summary
+says so per changed place, and one other change there (a `clear`, an
+`erase`, another branch) makes it an ordinary change. Where
 the loan model cannot tell that a loan lies below the element (a field of
 the owned object, `int& x = v[0]->value;`), the loan ends.
 
@@ -832,9 +835,10 @@ rehash). A loan held by an iterator or another loan-bearing value (a
 shall end there. Insertion in the middle of a deque, resize, pop_front,
 pop_back, shrink_to_fit, insert_or_assign (it writes an existing element) and
 erase have no such row: the elements are one place (`d[*]`), so a call that
-may destroy or change one of them ends every loan of them. So does a call of
-a user function that changes the container (its summary says that it changes
-it, not how).
+may destroy or change one of them ends every loan of them. A call of a user
+function in the translation unit keeps the references in the same way when
+every change it makes to the container is such an insertion (its summary
+says so per changed place, as for STN-91).
 
 STN-79  Lambdas as arguments to std
 A lambda shall also be allowed directly as an argument of a call to a std

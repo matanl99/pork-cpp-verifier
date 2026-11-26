@@ -120,9 +120,10 @@ int field_of_replaced(Owners& v) {
   return x;
 }
 
-// En egen funktion: sammanfattningen säger att v ändras, inte hur.
+// En egen funktion: sammanfattningen säger att varje ändring av v behåller
+// elementens värden (mer i corpus/130_summary_write_kinds.cpp).
 // rules: STN-91, STN-62
-// expect: not-stone: loans: changes 'v' while 'borrowed' borrows 'v[*][*]' and is used later
+// expect: stone: assuming
 int through_own_function(Owners& v) {
   R& borrowed = *v[0];
   add(v);
@@ -151,5 +152,6 @@ PORK_RUN_CASES(
     {"survives_push_back", [] { return survives_push_back(4) == 4 ? 0 : 1; }},
     {"survives_emplace_back", [] { Owners v = two(); return survives_emplace_back(v) == 5 ? 0 : 1; }},
     {"survives_reserve", [] { Owners v = two(); return survives_reserve(v) == 5 ? 0 : 1; }},
-    {"survives_insert", [] { Owners v = two(); return survives_insert(v) == 5 ? 0 : 1; }})
+    {"survives_insert", [] { Owners v = two(); return survives_insert(v) == 5 ? 0 : 1; }},
+    {"through_own_function", [] { Owners v = two(); return through_own_function(v) == 5 ? 0 : 1; }})
 #endif
