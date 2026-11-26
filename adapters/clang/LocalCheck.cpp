@@ -705,6 +705,28 @@ class TypeRules {
   //    kids; }`): en värdetyp om den är det under antagandet att den är det
   //    (koinduktivt). Utan skyddet går whyNotValue/recordReason runt i oändlighet.
   std::optional<std::string> recordReason(const CXXRecordDecl& decl) {
+    std::optional<std::string> why = structuralRecordReason(decl);
+    if (!why) return why;
+    // En obetrodd std-mall: dess interna fält (`_M_t`) säger inget för
+    // användaren. Domen är densamma, bara skälet pekar på trust-filen.
+    if (std::optional<std::string> tmpl = untrustedStdTemplate(decl))
+      return recordName(decl) + " is not a trusted type (add 'type " + *tmpl + "' to a trust file)";
+    return why;
+  }
+
+  // Mallnamnet för en specialisering av en publik std-mall i en systemheader
+  // som inte står i trust-filen (och inte har en egen regel: STN-71, STN-88).
+  std::optional<std::string> untrustedStdTemplate(const CXXRecordDecl& decl) const {
+    const auto* spec = dyn_cast<ClassTemplateSpecializationDecl>(&decl);
+    if (spec == nullptr) return std::nullopt;
+    if (!decl.getASTContext().getSourceManager().isInSystemHeader(decl.getLocation())) return std::nullopt;
+    std::string tmpl = spec->getSpecializedTemplate()->getQualifiedNameAsString();
+    if (!tmpl.starts_with("std::") || tmpl.find("::_") != std::string::npos) return std::nullopt;
+    if (trust_.types.contains(tmpl) || tmpl == "std::initializer_list" || sharedOwnership(tmpl)) return std::nullopt;
+    return tmpl;
+  }
+
+  std::optional<std::string> structuralRecordReason(const CXXRecordDecl& decl) {
     std::string name = recordName(decl);
     const auto* key = decl.getCanonicalDecl();
     if (!inProgress_.insert(key).second) return std::nullopt;  // antagandet

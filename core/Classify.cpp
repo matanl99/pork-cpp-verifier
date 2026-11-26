@@ -86,7 +86,9 @@ void demote(const FactsMap& facts, const TrustList& trust, const Implementations
           }
         auto it = v.find(calleeUsr);
         if (!why && it == v.end() && !isTrustedWithoutDefinition(callee, trust))
-          why = "calls '" + callee.name + "' with no definition in the analysed sources";
+          why = "calls '" + callee.name + "' with no definition in the analysed sources" +
+                (callee.qualifiedName.empty() ? std::string()
+                                              : " (trust it with '" + callee.qualifiedName + "' in a trust file)");
         else if (!why && it != v.end() && it->second.kind == Kind::notStone)
           why = "calls non-stone '" + callee.name + "'";
         if (why) {

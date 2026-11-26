@@ -59,7 +59,8 @@ TEST(Classify, LocalReasonIsKept) {
 
 TEST(Classify, CallingUndefinedFunctionIsNotStone) {
   EXPECT_EQ(run({fn("a", {"missing"})}).at("usr:a"),
-            Verdict::notStone("calls 'missing' with no definition in the analysed sources"));
+            Verdict::notStone("calls 'missing' with no definition in the analysed sources "
+                              "(trust it with 'missing' in a trust file)"));
 }
 
 TEST(Classify, NonStoneSpreadsTransitivelyToCallers) {

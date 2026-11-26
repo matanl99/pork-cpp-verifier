@@ -56,8 +56,9 @@ int uses_lambda(int a) {
 }
 
 // Utan trust-fil är std::optional ingen värdetyp (den lagrar värdet i en union).
+// Skälet pekar på trust-filen, inte på de interna fälten.
 // rules: STN-2, STN-4
-// expect: not-stone: is a union
+// expect: not-stone: parameter 'o' has type std::optional<int> (std::optional<int> is not a trusted type (add 'type std::optional' to a trust file))
 int untrusted_optional(std::optional<int> o) { return 0; }
 
 // rules: STN-5

@@ -22,7 +22,7 @@ double len(double x, double y) { return ::hypot(x, y); }
 double scaled(double x) { return ext_scale(x); }
 
 // rules: STN-23, STN-24
-// expect: not-stone: calls 'ext_unknown' with no definition in the analysed sources
+// expect: not-stone: calls 'ext_unknown' with no definition in the analysed sources (trust it with 'ext_unknown' in a trust file)
 double unknown(double x) { return ext_unknown(x); }
 
 // rules: STN-24
