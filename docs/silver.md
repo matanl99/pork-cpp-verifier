@@ -155,8 +155,16 @@ användning; deklarationen skrivs inte ut. Korpusfallen har `assert` på värden
 kontrollerar också att C-modellen har rätt innehåll (en `assert` direkt efter `PORK_PRE` är ett
 förvillkor, så de står efter en sats).
 
-Inte än: element som byggs av en egen konstruktor, range-for över en array och `std::array`
-("cannot translate to C: ..."). Korpus 139.
+Range-for över en ägd array (`rangeFor`) blir en indexloop till N ur typen, utan
+`--vector-bound`: `for (int x : a)` ger `x = a.v[x__i]`, `for (int& x : a)` en pekare till
+elementet. Det gäller variabler, parametrar, fält (också `cells` i en metod), konstanta tabeller
+och raderna i en nästlad array (`for (const auto& row : m) for (int x : row)`).
+
+Beroendeoraklet (`--flow-oracle`) delar en array i löv `a[*]` med "för alla k < N", som en
+sekvens, så att namnen är flödets (`tests/data/flow/13_arrays.cpp`).
+
+Inte än: element som byggs av en egen konstruktor och `std::array` ("cannot translate to C:
+..."). Korpus 139.
 
 ## ESBMC som bevisare
 

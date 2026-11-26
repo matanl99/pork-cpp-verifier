@@ -301,6 +301,76 @@ int static_local_table(unsigned i) {
   return corners[i].x + corners[i].y;
 }
 
+// --- range-for ----------------------------------------------------------------
+
+// rules: SLV-44
+// expect: silver
+long long range_sum(const int (&a)[4]) {
+  long long s = 0;
+  for (int x : a) s += x;
+  return s;
+}
+
+// rules: SLV-44
+// expect: silver
+int range_values() {
+  int a[3] = {4, 5, 6};
+  int last = 0;
+  int count = 0;
+  for (const int& x : a) {
+    last = x;
+    ++count;
+  }
+  assert(last == 6 && count == 3);
+  return last;
+}
+
+// Skrivning genom loopvariabeln.
+// rules: SLV-44
+// expect: silver
+void range_clear(int (&a)[3]) {
+  for (int& x : a) x = 0;
+  assert(a[0] == 0 && a[2] == 0);
+}
+
+// rules: SLV-44
+// expect: silver
+int range_rows() {
+  int m[2][3] = {{1, 2, 3}, {4, 5, 6}};
+  int s = 0;
+  for (const auto& row : m)
+    for (int x : row) s += x;
+  assert(s == 21);
+  return s;
+}
+
+// rules: SLV-44
+// expect: silver
+int range_table() {
+  int s = 0;
+  for (int x : kTable) s += x;
+  assert(s == 100);
+  return s;
+}
+
+// rules: SLV-44
+// expect: silver
+int range_field(const Board& b) {
+  int n = 0;
+  for (int c : b.cells) n += c == 0 ? 1 : 0;
+  return n;
+}
+
+// Ett index ur loopen kontrolleras fortfarande.
+// rules: SLV-44
+// expect: stone: not silver: array index out of bounds
+// expect[esbmc]: stone: not silver: array bounds violated
+int range_then_index(const int (&a)[4]) {
+  for (int x : a)
+    if (x != 0) return a[x];
+  return 0;
+}
+
 #ifdef PORK_RUN
 #include <pork/run.hpp>
 PORK_RUN_CASES(
@@ -321,5 +391,11 @@ PORK_RUN_CASES(
     {"table_lookup", [] { return table_lookup(3) == 40 ? 0 : 1; }},
     {"default_elements", [] { return default_elements() == 7 ? 0 : 1; }},
     {"name_char", [] { return name_char(1) == 'b' ? 0 : 1; }},
-    {"static_local_table", [] { return static_local_table(2) == 1 ? 0 : 1; }})
+    {"static_local_table", [] { return static_local_table(2) == 1 ? 0 : 1; }},
+    {"range_sum", [] { int v[4] = {1, 2, 3, 4}; return range_sum(v) == 10 ? 0 : 1; }},
+    {"range_values", [] { return range_values() == 6 ? 0 : 1; }},
+    {"range_clear", [] { int v[3] = {1, 2, 3}; range_clear(v); return v[1] == 0 ? 0 : 1; }},
+    {"range_rows", [] { return range_rows() == 21 ? 0 : 1; }},
+    {"range_table", [] { return range_table() == 100 ? 0 : 1; }},
+    {"range_field", [] { Board b{}; return range_field(b) == 9 ? 0 : 1; }})
 #endif

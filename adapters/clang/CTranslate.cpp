@@ -636,6 +636,16 @@ class Translator {
   bool oracleLeaves(QualType t, const std::string& path, const std::string& a, const std::string& b, bool output,
                     std::vector<OracleLeaf>& out) {
     t = t.getCanonicalType().getUnqualifiedType();
+    // SLV-44: elementen i en ägd array heter `a[*]`, som i en sekvens (flödets namn).
+    if (const ConstantArrayType* at = ctx_.getAsConstantArrayType(t)) {
+      std::vector<OracleLeaf> inner;
+      std::string k = "pork_q" + std::to_string(++loops_);
+      if (!oracleLeaves(at->getElementType(), path + "[*]", a + ".v[" + k + "]", b + ".v[" + k + "]", output, inner))
+        return false;
+      std::string n = llvm::toString(at->getSize(), 10, false) + "ul";
+      for (OracleLeaf& l : inner) out.push_back({l.path, forAll(k, n, l.assume), forAll(k, n, l.compare), output});
+      return true;
+    }
     const auto* rd = t->getAsCXXRecordDecl();
     if (rd != nullptr && rd->hasDefinition() && optionalSpec(rd) == nullptr && variantSpec(t) == nullptr) {
       if (const auto* spec = sequenceSpec(rd)) {
@@ -2601,6 +2611,30 @@ class Translator {
   // som inte ändras i loopen; x är en pekare till elementet eller en kopia.
   Text rangeFor(const CXXForRangeStmt& rf, const std::string& at) {
     const Expr* range = rf.getRangeInit();
+    // SLV-44: en ägd array (variabel, parameter, fält, konstant tabell, rad i
+    // en nästlad array). Antalet varv är N ur typen.
+    if (const ConstantArrayType* arr = ctx_.getAsConstantArrayType(range->getType())) {
+      if (!isPath(range)) return fail("range-for over this expression");
+      TRY(v, expr(range));
+      const VarDecl& var = *rf.getLoopVariable();
+      std::string x = varName(var);
+      std::string i = x + "__i";
+      std::string element = v + ".v[" + i + "]";
+      std::string decl;
+      if (const auto* ref = var.getType()->getAs<ReferenceType>()) {
+        TRY(ct, cType(ref->getPointeeType()));
+        decl = std::string(ref->getPointeeType().isConstant(ctx_) ? "const " : "") + ct + " *" + x + " = &" + element +
+               ";\n";
+        pointers_.insert(&var);
+      } else {
+        TRY(ct, cType(var.getType()));
+        decl = ct + " " + x + " = " + element + ";\n";
+      }
+      TRY(b, stmt(rf.getBody()));
+      std::string n = llvm::toString(arr->getSize(), 10, false) + "ul";
+      return "{\n" + at + "unsigned long " + i + ";\n" + at + "for (" + i + " = 0; " + i + " < " + n + "; " + i +
+             "++)\n{\n" + decl + b + "}\n}\n";
+    }
     if ((!sequenceSpec(range->getType()) || !isPath(range)) && spanParam(range) == nullptr)
       return fail("range-for over this expression");
     TRY(v, expr(range));

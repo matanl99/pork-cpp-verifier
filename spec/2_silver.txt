@@ -251,6 +251,8 @@ array fields are initialized as in C++: listed elements, then the array
 filler (value initialization, or default member initializers of the element
 type), also for elements built by an implicit default constructor. A
 constant table (a `const` array with constant initialization, also a static
-local constant) is its value. Not translated yet: elements built by a
-user-provided constructor, range-for over an array and `std::array`: `not
-silver: cannot translate to C: ...`.
+local constant) is its value. A range-for over an owned array (a variable,
+parameter, field, constant table or row of a nested array) shall run N
+times, the loop variable a copy of or a reference to element k. Not
+translated yet: elements built by a user-provided constructor and
+`std::array`: `not silver: cannot translate to C: ...`.
