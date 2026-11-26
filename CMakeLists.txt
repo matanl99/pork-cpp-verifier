@@ -168,6 +168,16 @@ add_test(NAME corpus_runtime_ambiguous
   COMMAND Python3::Interpreter -I ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_runtime.py
           $<TARGET_FILE:pork> ${CMAKE_CURRENT_SOURCE_DIR}/tests/data/runtime_ambiguous)
 set_tests_properties(corpus_runtime_ambiguous PROPERTIES PASS_REGULAR_EXPRESSION "names functions on lines 4, 5")
+# Korsorakel mot Clang Static Analyzer: en varning vars väg bara går genom
+# godkända funktioner är ett kandidathål (tests/check_analyzer.py).
+add_test(NAME corpus_analyzer
+  COMMAND Python3::Interpreter -I ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_analyzer.py
+          $<TARGET_FILE:pork> ${CMAKE_CURRENT_SOURCE_DIR}/corpus --jobs 4)
+# Självtest: ett känt falsklarm utan markering ger HOLE, med markering false.
+add_test(NAME corpus_analyzer_selftest
+  COMMAND Python3::Interpreter -I ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_analyzer.py
+          $<TARGET_FILE:pork> ${CMAKE_CURRENT_SOURCE_DIR}/tests/data/analyzer)
+set_tests_properties(corpus_analyzer_selftest PROPERTIES PASS_REGULAR_EXPRESSION "HOLE 1, explained 0, runtime 0, false 1,")
 # --flow (Bronze steg 1, docs/bronze.md): härlett flöde mot `// flow:`-rader.
 add_test(NAME flow
   COMMAND Python3::Interpreter -I ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_flow.py

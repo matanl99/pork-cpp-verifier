@@ -60,6 +60,7 @@ int out_of_vector(int value) {
 int local_checked_after() {
   auto p = std::make_unique<R>(R{1});
   int n = take(std::move(p));
+  // analyzer: cplusplus.Move: a moved-from unique_ptr is null ([unique.ptr.single.ctor])
   return p.get() == nullptr ? n : 0;
 }
 

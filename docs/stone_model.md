@@ -283,7 +283,11 @@ std.txt ger HOLE. Tvetydiga körningsnamn och program som kraschar vid listninge
 testet. Ett andra orakel låter kompilatorn utvärdera samma körningar med constexpr
 (`tests/check_constexpr.py`): odefinierat beteende i kärnspråket måste avvisas där, också det
 som ASan inte ser (råa pekare i olika objekt, delete via en bas utan virtuell destruktor).
-Overflow och index utanför räknas inte som hål, det är Silvers sak. Matrisen och kontrollen av
+Overflow och index utanför räknas inte som hål, det är Silvers sak. Ett tredje orakel korsar
+domarna med Clang Static Analyzer (`tests/check_analyzer.py`, ctest `corpus_analyzer`): en
+varning vars körväg bara går genom godkända funktioner är ett kandidathål. Det kräver inga
+körningar, så det prövar också filer utan `PORK_RUN`. Division med noll och index räknas som
+Silvers sak, kända falsklarm märks `// analyzer: <check>: <varför>`. Matrisen och kontrollen av
 ekvivalenta skrivsätt finns inte. I2 hittades av en
 granskare, inte av en test.
 
