@@ -154,6 +154,153 @@ int calls_set(int (&a)[3]) {
   return a[0];
 }
 
+// --- lokala arrayer, initierare och tabeller ------------------------------------
+
+// rules: SLV-44
+// expect: silver
+int local_array() {
+  int a[3] = {1, 2};
+  assert(a[1] == 2 && a[2] == 0);
+  return a[0] + a[1] + a[2];
+}
+
+// rules: SLV-44, SLV-17
+// expect: silver
+int local_zero(unsigned i) {
+  PORK_PRE(i < 5);
+  int z[5] = {};
+  z[i] = 4;
+  return z[i];
+}
+
+// En lokal array skrivs och läses, och indexet kontrolleras också där.
+// rules: SLV-44
+// expect: stone: not silver: array index out of bounds
+// expect[esbmc]: stone: not silver: array bounds violated
+int local_off(unsigned n) {
+  int a[4] = {};
+  for (unsigned i = 0; i < n; ++i) a[i] = 1;
+  return a[0];
+}
+
+// rules: SLV-44
+// expect: silver
+int nested_init() {
+  int m[2][2] = {{1, 2}, {3}};
+  assert(m[0][1] == 2 && m[1][0] == 3 && m[1][1] == 0);
+  return m[0][1] + m[1][0] + m[1][1];  // 2 + 3 + 0
+}
+
+struct Point {
+  int x;
+  int y;
+};
+
+struct Shape {
+  int sides[3];
+  Point corners[2];
+};
+
+// rules: SLV-44
+// expect: silver
+int aggregate_with_arrays() {
+  Shape s{{1, 2, 3}, {{1, 2}, {3, 4}}};
+  Shape e{};
+  assert(s.sides[2] == 3 && s.corners[1].y == 4 && e.sides[1] == 0 && e.corners[0].x == 0);
+  return s.sides[2] + s.corners[1].y + e.sides[1] + e.corners[0].x;  // 3 + 4 + 0 + 0
+}
+
+// Fyllnaden är ett element med fältinitierare, inte noll.
+struct Cell {
+  int value = 7;
+};
+
+// rules: SLV-44
+// expect: silver
+int filler_with_initializer() {
+  Cell cs[3] = {Cell{1}};
+  assert(cs[0].value == 1 && cs[2].value == 7);
+  return cs[0].value + cs[2].value;  // 1 + 7
+}
+
+// Ett arrayfält med initierare i klassen och i en konstruktor.
+struct Counters {
+  int hits[2] = {5, 6};
+  int misses[2];
+  // rules: SLV-44, SLV-39
+  // expect: silver
+  Counters() : misses{} {}
+};
+
+// rules: SLV-44
+// expect: silver
+int member_initializers() {
+  Counters c;
+  assert(c.hits[1] == 6 && c.misses[0] == 0);
+  return c.hits[1] + c.misses[0];  // 6 + 0
+}
+
+// Element med implicit standardkonstruktor: fältinitierarna i varje element.
+// rules: SLV-44
+// expect: silver
+int default_elements() {
+  Cell cs[3];
+  cs[1].value = 2;
+  assert(cs[0].value == 7 && cs[1].value == 2 && cs[2].value == 7);
+  return cs[2].value;
+}
+
+// En egen konstruktor per element översätts inte än.
+struct Counted {
+  int n;
+  // rules: SLV-39
+  // expect: silver
+  Counted() : n(1) {}
+};
+
+// rules: SLV-44
+// expect: stone: not silver: cannot translate to C: array of Counted built by a constructor (not translated yet)
+int constructed_elements() {
+  Counted cs[2];
+  return cs[1].n;
+}
+
+static const int kTable[4] = {10, 20, 30, 40};
+static const char kName[] = "abc";
+
+// En tabell ur en strängliteral (med avslutande noll).
+// rules: SLV-44
+// expect: silver
+int name_char(unsigned i) {
+  int c = i < 4 ? kName[i] : -1;
+  assert(i != 1 || c == 'b');
+  assert(i != 3 || c == 0);
+  return c;
+}
+
+// rules: SLV-44, SLV-17
+// expect: silver
+int table_lookup(unsigned i) {
+  PORK_PRE(i < 4);
+  int v = kTable[i];
+  assert(i != 2 || v == 30);
+  return v;
+}
+
+// rules: SLV-44
+// expect: stone: not silver: array index out of bounds
+// expect[esbmc]: stone: not silver: array bounds violated
+int table_any(unsigned i) { return kTable[i]; }
+
+// rules: SLV-44, SLV-17
+// expect: silver
+int static_local_table(unsigned i) {
+  PORK_PRE(i < 3);
+  static const Point corners[3] = {{0, 0}, {1, 0}, {0, 1}};
+  assert(i != 1 || (corners[i].x == 1 && corners[i].y == 0));
+  return corners[i].x + corners[i].y;
+}
+
 #ifdef PORK_RUN
 #include <pork/run.hpp>
 PORK_RUN_CASES(
@@ -164,5 +311,15 @@ PORK_RUN_CASES(
     {"Board::at", [] { Board b{}; b.cells[8] = 2; return b.at(8) == 2 ? 0 : 1; }},
     {"copy_is_value", [] { Board b{}; return copy_is_value(b) == 0 ? 0 : 1; }},
     {"grid", [] { int m[2][3] = {{1, 2, 3}, {4, 5, 6}}; return grid(m, 1, 2) == 6 ? 0 : 1; }},
-    {"calls_set", [] { int v[3] = {}; return calls_set(v) == 5 ? 0 : 1; }})
+    {"calls_set", [] { int v[3] = {}; return calls_set(v) == 5 ? 0 : 1; }},
+    {"local_array", [] { return local_array() == 3 ? 0 : 1; }},
+    {"local_zero", [] { return local_zero(4) == 4 ? 0 : 1; }},
+    {"nested_init", [] { return nested_init() == 5 ? 0 : 1; }},
+    {"aggregate_with_arrays", [] { return aggregate_with_arrays() == 7 ? 0 : 1; }},
+    {"filler_with_initializer", [] { return filler_with_initializer() == 8 ? 0 : 1; }},
+    {"member_initializers", [] { return member_initializers() == 6 ? 0 : 1; }},
+    {"table_lookup", [] { return table_lookup(3) == 40 ? 0 : 1; }},
+    {"default_elements", [] { return default_elements() == 7 ? 0 : 1; }},
+    {"name_char", [] { return name_char(1) == 'b' ? 0 : 1; }},
+    {"static_local_table", [] { return static_local_table(2) == 1 ? 0 : 1; }})
 #endif

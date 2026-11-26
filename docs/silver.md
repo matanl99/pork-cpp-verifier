@@ -146,8 +146,17 @@ samma läsning, därav "(+1 more)". Indata är giltiga element (ändliga flyttal
 intervall, `assumeValid` i en loop). Ett `const` på en array sitter på elementtypen, så målet
 för en referens prövas med `isConstant(ctx)`, inte `isConstQualified()`.
 
-Inte än: lokala arrayer och deras initierare, konstanta tabeller, range-for över en array och
-`std::array` ("cannot translate to C: ..."). Korpus 139.
+Initierare: `{1, 2}` för `int[3]` blir `(struct pork_arr_int_3ul){{1, 2}}`. Saknade element tas
+från `array_filler`; är fyllnaden värdeinitiering räcker C:s egen nollfyllnad, annars (ett
+element med fältinitierare) skrivs varje element ut. `D d[3];` med implicit
+standardkonstruktor ger `defaultValue` per element. En konstant tabell (`static const int
+t[4] = {...}`, också statisk lokal) är sitt värde (`APValue` som array eller struct) vid varje
+användning; deklarationen skrivs inte ut. Korpusfallen har `assert` på värdena, så beviset
+kontrollerar också att C-modellen har rätt innehåll (en `assert` direkt efter `PORK_PRE` är ett
+förvillkor, så de står efter en sats).
+
+Inte än: element som byggs av en egen konstruktor, range-for över en array och `std::array`
+("cannot translate to C: ..."). Korpus 139.
 
 ## ESBMC som bevisare
 

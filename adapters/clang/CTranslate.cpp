@@ -1543,7 +1543,8 @@ class Translator {
 
   Text zero(QualType t) {
     TRY(ct, cType(t));
-    return t.getCanonicalType()->getAsCXXRecordDecl() != nullptr ? "(" + ct + "){0}" : "((" + ct + ")0)";
+    bool compound = t.getCanonicalType()->getAsCXXRecordDecl() != nullptr || t->isArrayType();
+    return compound ? "(" + ct + "){0}" : "((" + ct + ")0)";
   }
 
   // Antaganden om godtyckliga indata: flyttal ändliga, enums inom sitt intervall.
@@ -1673,6 +1674,32 @@ class Translator {
   Text constant(const APValue& v, QualType t) {
     if (v.isInt()) return intLiteral(v.getInt(), t);
     if (v.isFloat()) return floatLiteral(v.getFloat(), t);
+    // SLV-44: en konstant tabell (STN-75), också av structar.
+    if (v.isArray()) {
+      const ConstantArrayType* at = ctx_.getAsConstantArrayType(t);
+      if (at == nullptr) return fail("constant of type " + t.getAsString() + " is not supported");
+      TRY(ct, cType(t));
+      std::string parts;
+      for (unsigned k = 0; k < v.getArraySize(); ++k) {
+        const APValue& el = k < v.getArrayInitializedElts() ? v.getArrayInitializedElt(k) : v.getArrayFiller();
+        TRY(x, constant(el, at->getElementType()));
+        parts += (parts.empty() ? "" : ", ") + x;
+      }
+      return "(" + ct + "){{" + parts + "}}";
+    }
+    if (v.isStruct()) {
+      const CXXRecordDecl* rd = t.getCanonicalType()->getAsCXXRecordDecl();
+      if (rd == nullptr || !rd->hasDefinition() || v.getStructNumBases() != 0 || sm_.isInSystemHeader(rd->getLocation()))
+        return fail("constant of type " + t.getAsString() + " is not supported");
+      TRY(ct, cType(t));
+      std::string parts;
+      unsigned k = 0;
+      for (const FieldDecl* f : rd->getDefinition()->fields()) {
+        TRY(x, constant(v.getStructField(k++), f->getType()));
+        parts += (parts.empty() ? "" : ", ") + x;
+      }
+      return "(" + ct + "){" + parts + "}";
+    }
     return fail("constant of type " + t.getAsString() + " is not supported");
   }
 
@@ -2317,6 +2344,19 @@ class Translator {
 
   Text construct(const CXXConstructExpr& c) {
     const CXXConstructorDecl* ctor = c.getConstructor();
+    if (const ConstantArrayType* at = ctx_.getAsConstantArrayType(c.getType())) {
+      // `D d[3];` med implicit standardkonstruktor: fältinitierarna i varje
+      // element. En egen konstruktor per element översätts inte än.
+      if (ctor->isUserProvided() || !ctor->isDefaultConstructor() || sm_.isInSystemHeader(ctor->getLocation()))
+        return fail("array of " + recordName(*ctor->getParent()) + " built by a constructor (not translated yet)");
+      std::uint64_t n = at->getSize().getZExtValue();
+      if (n > 4096) return fail("array initializer with more than 4096 elements");
+      TRY(ct, cType(c.getType()));
+      TRY(one, defaultValue(*ctor->getParent()));
+      std::string parts;
+      for (std::uint64_t k = 0; k < n; ++k) parts += (k == 0 ? "" : ", ") + one;
+      return "(" + ct + "){{" + parts + "}}";
+    }
     if (const auto* spec = optionalSpec(ctor->getParent()); spec != nullptr && !ctor->isCopyOrMoveConstructor())
       return optionalConstruct(c, *spec);
     if (const auto* spec = variantSpec(ctor->getParent())) {
@@ -2391,7 +2431,23 @@ class Translator {
   Text initList(const InitListExpr& il) {
     if (il.isTransparent()) return expr(il.getInit(0));
     QualType t = il.getType();
-    if (t->isArrayType()) return fail("array initializer");
+    if (const ConstantArrayType* at = ctx_.getAsConstantArrayType(t)) {
+      // SLV-44: `{1, 2}` för int[3]. Saknade element är fyllnaden; är den
+      // värdeinitiering räcker C:s egen nollfyllnad.
+      TRY(ct, cType(t));
+      std::uint64_t n = at->getSize().getZExtValue();
+      const Expr* filler = il.hasArrayFiller() ? il.getArrayFiller() : nullptr;
+      bool zeroFill = filler == nullptr || isa<ImplicitValueInitExpr>(filler);
+      std::string parts;
+      for (std::uint64_t k = 0; k < n; ++k) {
+        if (k >= il.getNumInits() && zeroFill) break;
+        if (k >= 4096) return fail("array initializer with more than 4096 elements");
+        TRY(x, expr(k < il.getNumInits() ? il.getInit(static_cast<unsigned>(k)) : filler));
+        parts += (parts.empty() ? "" : ", ") + x;
+      }
+      if (parts.empty()) return "(" + ct + "){0}";
+      return "(" + ct + "){{" + parts + "}}";
+    }
     if (t.getCanonicalType()->getAsCXXRecordDecl() == nullptr) {
       if (il.getNumInits() == 0) return zero(t);
       return expr(il.getInit(0));
@@ -2776,6 +2832,11 @@ class Translator {
   Text local(const VarDecl& vd) {
     std::string name = varName(vd);
     const Expr* init = vd.getInit();
+    // En statisk lokal konstant (STN-75) läses genom sitt värde (constantVar).
+    if (vd.isStaticLocal()) {
+      if (vd.getType().isConstant(ctx_) && vd.evaluateValue() != nullptr) return std::string();
+      return fail("static local '" + name + "'");
+    }
     if (init == nullptr) {
       // Skalär utan initierare: Stone har visat att den tilldelas före varje
       // läsning (clangs analys), så värdet i C (godtyckligt för cbmc) läses aldrig.

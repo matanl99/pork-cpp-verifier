@@ -246,6 +246,11 @@ harness. A `const T (&)[N]` parameter is a value, a `T (&)[N]` parameter a
 pointer, as for other types. Each subscript `a[i]` shall check `0 <= i < N`
 where it is evaluated: `not silver: array index out of bounds` (ESBMC: `array
 bounds violated`), with the line of the subscript. The input elements are
-valid values (finite floats, enumerations in range). Not translated yet:
-local arrays and their initializers, constant tables, range-for over an
-array and `std::array`: `not silver: cannot translate to C: ...`.
+valid values (finite floats, enumerations in range). Local arrays and
+array fields are initialized as in C++: listed elements, then the array
+filler (value initialization, or default member initializers of the element
+type), also for elements built by an implicit default constructor. A
+constant table (a `const` array with constant initialization, also a static
+local constant) is its value. Not translated yet: elements built by a
+user-provided constructor, range-for over an array and `std::array`: `not
+silver: cannot translate to C: ...`.

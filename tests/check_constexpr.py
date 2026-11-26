@@ -18,7 +18,7 @@ Orsaken är den första noten efter felet. Den sorteras:
              bibliotekets förvillkor (_GLIBCXX_ASSERTIONS): körtidsfel, det
              Silver lovar, inte Stone
     cannot   provet går inte att utvärdera (icke-constexpr-anrop, global,
-             gräns för antal steg): fäller testet, provet prövar inget
+             statisk lokal, gräns för antal steg): fäller testet, provet prövar inget
 
 Domen kommer från pork med fallets egna argument utom --silver (Silver körs
 med minnestak i check_corpus; här jämförs bara Stone):
@@ -67,7 +67,8 @@ RUNTIME = re.compile(r"outside the range of representable|division by zero|remai
 CANNOT = re.compile(r"non-constexpr|non-const variable|not allowed in a constant expression|non-literal|"
                     r"cannot be used in a constant expression|maximum|undefined function|virtual base|"
                     r"reinterpret_cast|volatile|inline assembly|visible outside that expression|"
-                    r"subexpression not valid in a constant expression")  # t.ex. throw (C++23)
+                    r"subexpression not valid in a constant expression|"  # t.ex. throw (C++23)
+                    r"definition of a (static|thread_local) variable")  # statisk lokal (konstant tabell)
 SKIP_NOTE = re.compile(r"^(expanded from|in call to|declared here|in instantiation|while )")
 
 
