@@ -1,0 +1,25 @@
+type std::span
+std::span::*
+type std::basic_string
+std::basic_string::*
+type std::allocator
+std::allocator::*
+type std::vector
+std::vector::*
+std::char_traits::*
+type std::deque
+std::deque::*
+type std::list
+std::list::*
+type std::map
+std::map::*
+type std::less
+std::less::*
+type std::pair
+std::pair::*
+type std::basic_string_view
+std::basic_string_view::*
+type std::optional
+std::optional::*
+type std::reference_wrapper
+std::reference_wrapper::*

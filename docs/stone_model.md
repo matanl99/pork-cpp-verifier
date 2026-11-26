@@ -609,6 +609,19 @@ lån av något okänt utanför: `const char& r = c.cur();` med `c` en lokal `Cur
 lokal sträng `s` överlevde både `s += ...` och att `s` dog. Skrivningar och tomhet sparas
 fortfarande som "okänt utanför" (`absolute`).
 
+**Behållare med lånebärande element** (STN-93, korpus 137): en lokal behållare håller en
+lånemängd för alla sina element (`localHolder` godtar ägd lagring under variabeln). Insättning
+(`storedByCall`, nu också för effekten `insert`) lägger till vad argumenten kan ge elementet:
+det ett argument av elementtypen håller (`copiesElement`, `value_type`), och annars det
+argumentet betecknar, utom tal, enums och tomma std-objekt som byggs in i element av bara
+inbyggda och std-typer (`scalarCopiedInto`, `stdOnly`; inte `std::reference_wrapper`). Ett
+anrop på en ägare (`ownerOperand`) ger ett resultat som lånar ägd lagring, inte det
+elementen håller. **Hål som hittades:** `std::deque`, `std::list` och `std::map` med vyer
+följde inga lån alls vid insättning (bara effekten `standard` lagrade), och en konverterande
+tilldelning till en lånebärande lokal (`o = s`) ersatte mängden med det strängen höll (inget).
+Kvar (precision): `vs.push_back(s); vs.push_back(s);` avvisas som överlapp, eftersom en
+`push_back` antas kunna skriva genom elementens lån.
+
 Inom en TU. Över TU:er (sammanfattningen i `FunctionFacts`, fixpunkt i kärnan) är nästa
 steg om anrop mellan filer visar sig behöva det; till dess får de standarden.
 

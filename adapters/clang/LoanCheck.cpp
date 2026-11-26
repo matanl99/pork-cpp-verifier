@@ -956,16 +956,15 @@ class LoanChecker {
     return heldIn(places(e, s), e->getType(), e, s);
   }
 
-  // Ett fält (inga element) i en egen lokal variabel som inte är en referens:
-  // variabeln, som håller lånen för hela objektet (ett ursprung per objekt,
-  // STN-93). Annars nullptr.
+  // Ett fält eller element (ägd lagring, `cs[*]`) i en egen lokal variabel som
+  // inte är en referens: variabeln, som håller lånen för hela objektet (ett
+  // ursprung per objekt, STN-93; en behållare håller sina elements lån).
+  // Annars nullptr.
   const VarDecl* localHolder(const Place& p) const {
     const VarDecl* vd = rootVar(p);
     if (vd == nullptr || vd->getType()->isReferenceType() || !vd->hasLocalStorage() ||
         vd->getParentFunctionOrMethod() != &fd_ || p.via != nullptr)
       return nullptr;
-    for (const FieldDecl* f : p.path)
-      if (f == nullptr) return nullptr;
     return vd;
   }
 
@@ -1266,6 +1265,13 @@ class LoanChecker {
 
   bool operandLoanBearing(const Operand& o) { return types_.loanBearing(operandType(o)); }
 
+  // Objektet i anropet är en behållare eller annan ägare (gsl::Owner).
+  static bool ownerOperand(const Operand& o) {
+    if (!o.object) return false;
+    const CXXRecordDecl* rd = operandType(o).getNonReferenceType()->getAsCXXRecordDecl();
+    return rd != nullptr && isGslOwner(rd);
+  }
+
   // Sammanfattningen av en egen anropad funktion, eller nullptr (std, virtuell,
   // ingen kropp i TU:n, rekursion, eller modellen avvisar den).
   const Summary* ownSummary(const FunctionDecl* fd) {
@@ -1379,7 +1385,11 @@ class LoanChecker {
     std::vector<PlaceRef> out;
     for (const Operand& o : ops) {
       std::vector<PlaceRef> got;
-      if (operandLoanBearing(o)) {
+      // En behållare med lånebärande element (gsl::Owner) är ingen pekare:
+      // resultatet (vs[0], vs.begin()) lånar dess ägda lagring, inte det
+      // elementen håller.
+      bool pointerLike = operandLoanBearing(o) && !ownerOperand(o);
+      if (pointerLike) {
         // En iterator e.d.: resultatet pekar dit operanden pekar.
         got = o.object && !o.e->getType()->isPointerType() ? heldBy(o.e, s) : values(o.e, s);
       } else if (byReference(o)) {
@@ -1387,10 +1397,10 @@ class LoanChecker {
       }
       // Resultatet lånar ägd lagring i det operanden betecknar eller pekar på
       // (get_if(&v) pekar in i varianten, *it in i behållaren).
-      bool nested = !operandLoanBearing(o);
+      bool nested = !pointerLike;
       // En skalär har ingen ägd lagring: resultatet kan bara vara den själv
       // (std::max(a, b) ger a eller b), som en referens bunden till a.
-      bool scalar = byReference(o) && !operandLoanBearing(o) && operandType(o)->isScalarType();
+      bool scalar = byReference(o) && !pointerLike && operandType(o)->isScalarType();
       for (PlaceRef& r : got) {
         if (scalar) {
           r.exclusive = r.exclusive && !constResult;
@@ -1419,6 +1429,8 @@ class LoanChecker {
       std::vector<PlaceRef> got;
       if (types_.loanBearing(a->getType()))
         got = a->isGLValue() ? heldBy(a, s) : values(a, s);
+      else if (inStd(*ctor) && scalarCopiedInto(a->getType(), c->getType()))
+        continue;  // `std::pair<const int, std::string_view>{1, s}`: en kopia av talet
       else if (!param.isNull() && param->isReferenceType())
         for (PlaceRef& r : (got = places(a, s))) r.place = opened(r.place), r.loan = -1;
       out.insert(out.end(), got.begin(), got.end());
@@ -1896,7 +1908,9 @@ class LoanChecker {
         bool keeps = fd != nullptr && (inStd(*fd) || sm_.isInSystemHeader(fd->getLocation())) && o.object && rule.keepsValues && isUniquePtr(elementType(t));
         for (const PlaceRef& r : w.places) change(r.place, call, s, keeps);
       }
-      if (effect == Effect::standard) storedByCall(ops, md, call, s);
+      // Också insättning (std::deque, std::list, std::map): de nya elementen
+      // kan hålla lån ur argumenten.
+      if (effect == Effect::standard || effect == Effect::insert) storedByCall(ops, md, call, s);
     }
     if (port && effect == Effect::standard) changeOutside(call, s, fd ? fd->getQualifiedNameAsString() : "?");
     // insert(p, x): skrivningen genom positionen flyttar också bara elementen.
@@ -1949,6 +1963,20 @@ class LoanChecker {
                                              : values(other.e, s);
           incoming.insert(incoming.end(), held.begin(), held.end());
         }
+        // Ett argument av behållarens elementtyp kopieras in (push_back(x),
+        // insert({k, v})): elementet håller det argumentet håller, inte ett
+        // lån av argumentet självt (som kan vara en temporär).
+        if (o.object && operandLoanBearing(other) && copiesElement(target, other.e->getType())) continue;
+        // En implicit eller std-tilldelning av ett lånebärande objekt
+        // (`cs[0] = Cursor{t, 0}`): en medlemsvis kopia av det argumentet håller.
+        if (o.object && md != nullptr && (md->isCopyAssignmentOperator() || md->isMoveAssignmentOperator()) &&
+            (!md->isUserProvided() || inStd(*md)) && operandLoanBearing(other) &&
+            fd_.getASTContext().hasSameUnqualifiedType(target.getCanonicalType(),
+                                                       other.e->getType().getNonReferenceType().getCanonicalType()))
+          continue;
+        // Ett tal eller en enum som kopieras in i element av bara inbyggda och
+        // std-typer (`m.emplace(1, s)`): inget i elementet kan referera till det.
+        if (o.object && scalarCopiedInto(other.e->getType(), valueType(target))) continue;
         if (byReference(other))
           for (PlaceRef r : operandPlaces(other, s)) {
             r.place = opened(r.place);
@@ -2076,6 +2104,49 @@ class LoanChecker {
   }
 
   // Elementtypen i en std-behållare (första typargumentet).
+  // Typen byggs bara av inbyggda typer, enums, pekare och std-mallar av sådana
+  // (ingen användarkod kan konstrueras ur ett argument), utom
+  // std::reference_wrapper.
+  static bool stdOnly(QualType t) {
+    if (t.isNull()) return false;
+    t = t.getCanonicalType();
+    if (t->isReferenceType()) return false;
+    if (t->isBuiltinType() || t->isEnumeralType() || t->isPointerType()) return true;
+    const auto* spec = dyn_cast_or_null<ClassTemplateSpecializationDecl>(t->getAsCXXRecordDecl());
+    if (spec == nullptr || !inStd(*spec)) return false;
+    // reference_wrapper<T> byggs av ett lvärde T& genom att spara adressen.
+    if (spec->getSpecializedTemplate()->getQualifiedNameAsString() == "std::reference_wrapper") return false;
+    for (const TemplateArgument& a : spec->getTemplateArgs().asArray())
+      if (a.getKind() == TemplateArgument::Type && !stdOnly(a.getAsType())) return false;
+    return true;
+  }
+
+  // Ett tal, en enum eller en tom std-klass (std::allocator som
+  // defaultargument) som argument till något som bygger `built`: en kopia.
+  static bool scalarCopiedInto(QualType arg, QualType built) {
+    QualType a = arg.getNonReferenceType();
+    const CXXRecordDecl* rd = a->getAsCXXRecordDecl();
+    bool emptyStd = rd != nullptr && rd->hasDefinition() && rd->getDefinition()->isEmpty() && inStd(*rd);
+    return (a->isArithmeticType() || a->isEnumeralType() || emptyStd) && stdOnly(built);
+  }
+
+  // `value_type` i en behållare (std::map: pair<const K, V>).
+  static QualType valueType(QualType t) {
+    const CXXRecordDecl* rd = t.getNonReferenceType().getCanonicalType()->getAsCXXRecordDecl();
+    if (rd == nullptr || !rd->hasDefinition()) return {};
+    for (const NamedDecl* d : rd->getDefinition()->lookup(&rd->getASTContext().Idents.get("value_type")))
+      if (const auto* td = dyn_cast<TypedefNameDecl>(d)) return td->getUnderlyingType();
+    return {};
+  }
+
+  // Argumentet är ett element som kopieras eller flyttas in i behållaren.
+  bool copiesElement(QualType container, QualType arg) const {
+    QualType v = valueType(container);
+    if (v.isNull()) return false;
+    return fd_.getASTContext().hasSameUnqualifiedType(v.getCanonicalType(),
+                                                      arg.getNonReferenceType().getCanonicalType());
+  }
+
   static QualType elementType(QualType t) {
     const auto* spec = dyn_cast_or_null<ClassTemplateSpecializationDecl>(
         t.getNonReferenceType().getCanonicalType()->getAsCXXRecordDecl());
@@ -2785,9 +2856,25 @@ class LoanChecker {
           types_.loanBearing(oc->getArg(0)->getType())) {
         const auto* dr = dyn_cast<DeclRefExpr>(strip(oc->getArg(0)));
         const auto* vd = dr != nullptr ? dyn_cast<VarDecl>(dr->getDecl()) : nullptr;
-        std::vector<PlaceRef> rhs = oc->getArg(1)->isGLValue() ? heldBy(oc->getArg(1), s) : values(oc->getArg(1), s);
+        // Samma typ: en kopia eller flytt, målet håller precis det högerledet
+        // håller. En konverterande tilldelning (`o = s` för en
+        // std::optional<std::string_view>) bygger målet ur högerledet: målet kan
+        // låna det högerledet betecknar, och det gamla ursprunget finns kvar.
+        const Expr* rhsExpr = oc->getArg(1);
+        bool sameType = fd_.getASTContext().hasSameUnqualifiedType(
+            oc->getArg(0)->getType().getNonReferenceType().getCanonicalType(),
+            rhsExpr->getType().getNonReferenceType().getCanonicalType());
+        std::vector<PlaceRef> rhs;
+        if (types_.loanBearing(rhsExpr->getType()))
+          rhs = rhsExpr->isGLValue() ? heldBy(rhsExpr, s) : values(rhsExpr, s);
+        if (!sameType && !types_.loanBearing(rhsExpr->getType()) && rhsExpr->isGLValue())
+          for (PlaceRef r : places(rhsExpr, s)) {
+            r.place = opened(r.place);
+            r.loan = -1;
+            rhs.push_back(r);
+          }
         if (vd != nullptr && vd->hasLocalStorage() && !vd->getType()->isReferenceType()) {
-          growLocal(vd, rhs, st, s, true);
+          growLocal(vd, rhs, st, s, sameType);
         } else if (std::vector<PlaceRef> target = places(oc->getArg(0), s); !storeInLocal(target, rhs, st, s)) {
           escape(rhs, st, "stores");
           if (!error_) storeOutside(target, rhs, st, s);
