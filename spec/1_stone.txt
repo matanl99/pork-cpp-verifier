@@ -818,6 +818,24 @@ local object's own storage may be stored in the object (`x.v = x.t;` on a
 local x): the loan model follows it, so a copy of x borrows x.t, and changing
 x.t while x is used later is rejected.
 
+STN-95  References that survive insertion
+A loan of an element, or of what an element owns, that a local reference or
+pointer holds (`int& r = d.front();`, `int* p = &r;`; not a reference to an
+iterator) shall stay valid across a std call whose row in summaries/std.txt
+says `insert invalidatesIterators`: the elements are not moved, only the
+iterators become invalid. That holds for insertion at either end of a
+std::deque ([deque.modifiers]: push_back, push_front, emplace_back,
+emplace_front) and for the calls of an unordered container that may rehash
+([unord.req.general]: insert, emplace, try_emplace, operator[], reserve,
+rehash). A loan held by an iterator or another loan-bearing value (a
+`std::pair` with an iterator), or stored outside the function (STN-92),
+shall end there. Insertion in the middle of a deque, resize, pop_front,
+pop_back, shrink_to_fit, insert_or_assign (it writes an existing element) and
+erase have no such row: the elements are one place (`d[*]`), so a call that
+may destroy or change one of them ends every loan of them. So does a call of
+a user function that changes the container (its summary says that it changes
+it, not how).
+
 STN-79  Lambdas as arguments to std
 A lambda shall also be allowed directly as an argument of a call to a std
 function (`std::sort(b, e, [](const T& a, const T& b) { ... })`), or a local

@@ -121,6 +121,7 @@ std::expected<void, std::string> LoanSummaries::parse(std::string_view text, con
       else if (*m == "insertsArguments") rule.insertsArguments = true;
       else if (*m == "swaps") rule.swaps = true;
       else if (*m == "keepsValues") rule.keepsValues = true;
+      else if (*m == "invalidatesIterators") rule.invalidatesIterators = true;
       else if (unsigned i = 0, j = 0; std::sscanf(m->c_str(), "interval(%u,%u)", &i, &j) == 2 &&
                                       *m == "interval(" + std::to_string(i) + "," + std::to_string(j) + ")" && i < j)
         rule.intervals.emplace_back(i, j);
@@ -129,8 +130,10 @@ std::expected<void, std::string> LoanSummaries::parse(std::string_view text, con
         rule.resultIn = i;
       else return fail("unknown modifier '" + *m +
                        "' (position, range, consumes, forwards, copies, interval(i,j) with i < j, resultIn(i), "
-                       "nonEmpty, resultNonEmpty, resultNullIfEmpty, keepsElements, insertsArguments, swaps, keepsValues)");
+                       "nonEmpty, resultNonEmpty, resultNullIfEmpty, keepsElements, insertsArguments, swaps, keepsValues, invalidatesIterators)");
     }
+    if (rule.invalidatesIterators && rule.effect != LoanEffect::insert)
+      return fail("invalidatesIterators needs the effect insert");
     for (auto n = w.begin() + 1; n != colon; ++n) {
       auto split = splitShape(*n);
       if (!split) return fail(split.error());

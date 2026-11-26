@@ -741,9 +741,21 @@ class LoanChecker {
     return loan.path.size() > n ? loan.path[n] == nullptr : loan.extra >= 1;
   }
 
+  // STN-95: en referens eller pekare till något som inte bär lån (ett element,
+  // inte en iterator) håller en adress, inte en position.
+  bool holdsAddress(const VarDecl* v) {
+    QualType t = v->getType();
+    if (!t->isReferenceType() && !t->isPointerType()) return false;
+    return !types_.loanBearing(t->getPointeeType());
+  }
+
   // G2: platsen ändras. `keepsPointees`: elementen (unique_ptr) behåller sina
   // värden och kan bara flyttas till ny lagring (STN-91), så det de äger lever.
-  void change(const Place& p, const Stmt* at, const State& s, bool keepsPointees = false) {
+  // `keepsAddresses` (STN-95): elementen flyttas inte alls, så lån som en lokal
+  // referens eller pekare håller lever; lån som hålls utanför funktionen, eller
+  // av iteratorer och objekt, dör.
+  void change(const Place& p, const Stmt* at, const State& s, bool keepsPointees = false,
+              bool keepsAddresses = false) {
     if (checking_) recordWrite(p);
     if (!checking_ || error_) return;
     for (const auto& [id, holder] : s.heldOutside)
@@ -753,6 +765,7 @@ class LoanChecker {
                             text(loans_[id].place) + "', which outlives the function");
     for (const VarDecl* v : liveAt(at, s)) {
       if (v == consumed_) continue;  // skrivs över av anropets resultat
+      if (keepsAddresses && holdsAddress(v)) continue;
       auto st = s.find(v);
       if (st == s.end()) continue;
       for (int id : st->second)
@@ -1741,7 +1754,13 @@ class LoanChecker {
       }
     } else {
       for (const Reach& w : refs) {
-        if (!w.written || w.loanSet || !w.invalidates) continue;
+        if (!w.written || w.loanSet) continue;
+        if (!w.invalidates) {
+          // STN-95: insättningen behåller elementen men inte iteratorerna.
+          if (rule.invalidatesIterators && ops[w.operand].object)
+            for (const PlaceRef& r : w.places) change(r.place, call, s, false, true);
+          continue;
+        }
         const Operand& o = ops[w.operand];
         QualType t = o.object && o.e->getType()->isPointerType() ? o.e->getType()->getPointeeType()
                                                                   : o.e->getType().getNonReferenceType();

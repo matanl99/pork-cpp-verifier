@@ -627,9 +627,13 @@ behållaren dör fortfarande (försiktigt: för noder dör egentligen bara det r
 men modellen skiljer inte element åt). `position` gäller bara första argumentet: i
 `v.insert(p, i, j)` får `i` och `j` inte peka in i `v` ([sequence.reqmts]), och G3 avvisar det.
 
-Utan regel (standarden): `vector`/`deque`/`string`-insättning (omallokering) och
-`unordered_*`-insättning (rehash ogiltigförklarar iteratorer; referenser överlever, men
-modellen skiljer inte iteratorlån från referenslån).
+Utan regel (standarden): `vector`/`string`-insättning (omallokering) och insättning mitt i en
+`deque`. Insättning i ändarna av en `deque` och `unordered_*`-insättning (rehash) har
+`insert invalidatesIterators` (STN-95): elementen flyttas inte, så ett lån som en lokal
+referens eller pekare håller lever, medan lån som iteratorer och andra lånebärande värden
+håller dör (`holdsAddress`, `change(..., keepsAddresses)` i LoanCheck). Skrivningen spelas
+in i sammanfattningen, så en egen funktion som gör `d.push_back(x)` avslutar alla lån hos
+anroparen.
 
 **Mätning**: korpusen 627 överens, 0 bara modellen, 167 bara reglerna. Nytt "bara
 reglerna": insättning i en `set` medan den itereras (`49_set_insert.cpp`, `51_loan_model.cpp`),
@@ -675,9 +679,9 @@ försiktiga, **0 osunda**. Under arbetet hittades:
   `--loans=off`): LLVM-headers inbyggda i pork är instrumenterade men `libclang-cpp.so` inte.
   Testpresetens miljö har `ASAN_OPTIONS=allow_user_poisoning=0` (se `CMakePresets.json`).
 
-**De försiktiga** (105, `--list`) är kända luckor, inte fel i std.txt: radering/`pop_*` av ett
-*annat* element (element-identitet saknas), `deque`- och `unordered`-insättning där referenser
-överlever men iteratorer inte (iteratorlån och referenslån skiljs inte), `string` och
+**De försiktiga** (93, `--list`) är kända luckor, inte fel i std.txt: radering/`pop_*` av ett
+*annat* element (element-identitet saknas), `deque::insert(c.end(), x)` (positionen är inte
+känd), `rehash`/`reserve` med iteratorlån när körningen inte råkar rehasha, `string` och
 `vector::clear` där inget minne frigörs. **Blinda fläckar** i riggen: `std::string` har inga
 säkra iteratorer i debugläget, och radering på plats i en sträng frigör inget, så en felaktig
 regel för `string` skulle bara hittas när omallokering sker. En ren körning är inget bevis.
@@ -741,9 +745,9 @@ verklig kod. Utan mätning prioriterar vi luckor efter gissning.
 (Silver: ekvivalens för översättningen, se `docs/equivalence.md`, kommer efter mätningen.)
 
 1. (Klart inom en TU, se Steg 2.) Över TU:er: sammanfattningen i `FunctionFacts`.
-2. (Klart, se Steg 3.) Kvar ur inventeringen av `std::vector`: skilja
-   iteratorlån från referenslån (`unordered_*`, `deque::push_back`), och `erase` som bara
-   ogiltigförklarar det raderade elementet i nodbehållare (kräver element-identitet).
+2. (Klart, se Steg 3.) Iteratorlån skiljs från referenslån vid insättning (`unordered_*`,
+   `deque::push_back`, STN-95). Kvar: `erase` som bara ogiltigförklarar det raderade
+   elementet i nodbehållare (kräver element-identitet).
 3. (Klart, se Steg 4.) Utöka `check_summaries.py` med fria funktioner (`get_if`, sökalgoritmer,
    `std::ranges`) och iteratoroperationer när std.txt får nya rader för dem.
 4. (Klart, se Steg 6.) Ta bort specialfall i `LocalCheck`.

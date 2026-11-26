@@ -26,9 +26,10 @@ owner begin end cbegin cend rbegin rend crbegin crend : access
 owner front back data at find lower_bound upper_bound equal_range value : access
 owner operator[] operator* operator-> : access
 # [map.access], [unord.map.elem]: operator[] sätter in om nyckeln saknas.
-# I map flyttas inga noder ([associative.reqmts.general]); unordered_map kan rehasha.
+# I map flyttas inga noder ([associative.reqmts.general]); unordered_map kan
+# rehasha, och då blir bara iteratorerna ogiltiga (STN-95, nedan).
 owner std::map::operator[] : insert
-owner std::unordered_map::operator[] : writeAccess
+owner std::unordered_map::operator[] : insert invalidatesIterators
 owner size empty capacity max_size count contains has_value index length : reads
 owner compare c_str starts_with ends_with get_allocator key_comp value_comp : reads
 # [optional.observe]: value_or läser *this. Raden säger inget om v: U&& skickas
@@ -62,6 +63,26 @@ owner std::set::insert(iterator,...) std::set::emplace_hint(iterator,...) : inse
 owner std::multiset::insert(iterator,...) std::multiset::emplace_hint(iterator,...) : insert position insertsArguments
 owner std::list::push_back std::list::push_front std::list::emplace_back std::list::emplace_front : insert insertsArguments
 owner std::list::insert(iterator,...) std::list::emplace(iterator,...) : insert position insertsArguments
+
+# STN-95. [deque.modifiers]: insättning i någon av ändarna ogiltigförklarar
+# alla iteratorer men inga referenser till element (insättning mitt i, resize
+# och pop_* får den vanliga raden). [unord.req.general]: en rehash
+# ogiltigförklarar iteratorer men inte referenser eller pekare till element,
+# och insert, emplace, try_emplace, operator[], reserve och rehash kan
+# rehasha ([unord.req], "rehashing ... may occur"). insert_or_assign skriver
+# ett befintligt element och får ingen rad.
+owner std::deque::push_back std::deque::push_front : insert copies insertsArguments keepsValues invalidatesIterators
+owner std::deque::emplace_back std::deque::emplace_front : insert insertsArguments keepsValues invalidatesIterators
+owner std::unordered_map::insert std::unordered_map::emplace std::unordered_map::try_emplace : insert insertsArguments invalidatesIterators
+owner std::unordered_map::insert(iterator,...) std::unordered_map::emplace_hint(iterator,...) std::unordered_map::try_emplace(iterator,...) : insert position insertsArguments invalidatesIterators
+owner std::unordered_multimap::insert std::unordered_multimap::emplace : insert insertsArguments invalidatesIterators
+owner std::unordered_multimap::insert(iterator,...) std::unordered_multimap::emplace_hint(iterator,...) : insert position insertsArguments invalidatesIterators
+owner std::unordered_set::insert std::unordered_set::emplace : insert insertsArguments invalidatesIterators
+owner std::unordered_set::insert(iterator,...) std::unordered_set::emplace_hint(iterator,...) : insert position insertsArguments invalidatesIterators
+owner std::unordered_multiset::insert std::unordered_multiset::emplace : insert insertsArguments invalidatesIterators
+owner std::unordered_multiset::insert(iterator,...) std::unordered_multiset::emplace_hint(iterator,...) : insert position insertsArguments invalidatesIterators
+owner std::unordered_map::reserve std::unordered_map::rehash std::unordered_multimap::reserve std::unordered_multimap::rehash : insert invalidatesIterators
+owner std::unordered_set::reserve std::unordered_set::rehash std::unordered_multiset::reserve std::unordered_multiset::rehash : insert invalidatesIterators
 
 # Radering via iterator: iteratorn får peka in i behållaren och blir ogiltig
 # ([sequence.reqmts] a.erase(q), [associative.reqmts] a.erase(q)); den

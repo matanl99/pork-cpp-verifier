@@ -1,0 +1,16 @@
+type std::deque
+std::deque::*
+type std::unordered_map
+std::unordered_map::*
+type std::unordered_set
+std::unordered_set::*
+type std::hash
+std::hash::*
+type std::equal_to
+std::equal_to::*
+type std::pair
+std::pair::*
+type std::vector
+std::vector::*
+type std::allocator
+std::allocator::*
