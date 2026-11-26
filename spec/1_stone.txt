@@ -790,9 +790,11 @@ resize, `v[0] = ...`, `v[0].reset()`). A call of a user function in the
 translation unit counts as such a call when every change it makes to the
 place (also through its own calls) is one that keeps the values: its summary
 says so per changed place, and one other change there (a `clear`, an
-`erase`, another branch) makes it an ordinary change. Where
-the loan model cannot tell that a loan lies below the element (a field of
-the owned object, `int& x = v[0]->value;`), the loan ends.
+`erase`, another branch) makes it an ordinary change. A loan of a field of
+the owned object (`int& x = v[0]->value;`, also `v[0]->in.value`) stays valid
+in the same way. Where the loan model cannot tell that a loan lies below the
+element (owned storage again under the field: `v[0]->p->value` with a
+`std::unique_ptr` field `p`), the loan ends.
 
 STN-92  Loans stored outside the function  [rejects]
 A loan stored in something that outlives the function (a field of a

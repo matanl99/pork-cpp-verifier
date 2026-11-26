@@ -7,8 +7,13 @@
 #include <utility>
 #include <vector>
 
+struct Inner {
+  int value;
+};
+
 struct R {
   int value;
+  Inner inner;
 };
 
 using Owners = std::vector<std::unique_ptr<R>>;
@@ -53,7 +58,44 @@ int survives_insert(Owners& v) {
   return borrowed.value;
 }
 
+// Ett fält i det elementet äger (`v[0]->value`, `v[*][*].value`): den
+// hopslagna nivån sitter vid elementets [*], eftersom bara fält följer.
+// rules: STN-91
+// expect: stone: assuming
+int field_survives_push_back(Owners& v) {
+  int& x = v[0]->value;
+  v.push_back(std::make_unique<R>(R{0}));
+  return x;
+}
+
+// rules: STN-91
+// expect: stone: assuming
+int nested_field_survives_push_back(Owners& v) {
+  int& x = v.front()->inner.value;
+  v.emplace_back(std::make_unique<R>(R{0}));
+  add(v);
+  return x;
+}
+
 // --- underkänns -------------------------------------------------------------
+
+// Ett fält i elementet självt (utan unique_ptr) flyttas med elementet.
+// rules: STN-91, STN-62
+// expect: not-stone: loans: changes 'v' while 'x' borrows 'v[*].value'
+int field_of_plain_element(std::vector<R>& v) {
+  int& x = v[0].value;
+  v.push_back(R{0});
+  return x;
+}
+
+// rules: STN-91, STN-62
+// expect: not-stone: loans: changes 'v' while 'x' borrows 'v[*].value[*]'
+int field_across_clear(Owners& v) {
+  int& x = v[0]->value;
+  v.clear();
+  v.push_back(std::make_unique<R>(R{0}));
+  return x;
+}
 
 // Elementet självt flyttas.
 // rules: STN-91, STN-62
@@ -153,5 +195,13 @@ PORK_RUN_CASES(
     {"survives_emplace_back", [] { Owners v = two(); return survives_emplace_back(v) == 5 ? 0 : 1; }},
     {"survives_reserve", [] { Owners v = two(); return survives_reserve(v) == 5 ? 0 : 1; }},
     {"survives_insert", [] { Owners v = two(); return survives_insert(v) == 5 ? 0 : 1; }},
-    {"through_own_function", [] { Owners v = two(); return through_own_function(v) == 5 ? 0 : 1; }})
+    {"through_own_function", [] { Owners v = two(); return through_own_function(v) == 5 ? 0 : 1; }},
+    {"field_survives_push_back", [] { Owners v = two(); return field_survives_push_back(v) == 5 ? 0 : 1; }},
+    {"nested_field_survives_push_back", [] {
+       Owners v = two();
+       v[0]->inner.value = 7;
+       return nested_field_survives_push_back(v) == 7 ? 0 : 1;
+     }},
+    {"field_of_plain_element", [] { std::vector<R> v{R{5}}; return field_of_plain_element(v) == 5 ? 0 : 1; }},
+    {"field_across_clear", [] { Owners v = two(); return field_across_clear(v) == 5 ? 0 : 1; }})
 #endif

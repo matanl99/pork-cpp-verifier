@@ -754,7 +754,14 @@ class LoanChecker {
       return false;
     for (std::size_t i = 0; i + 1 < n; ++i)
       if (loan.path[i] == nullptr) return false;
-    return loan.path.size() > n ? loan.path[n] == nullptr : loan.extra >= 1;
+    if (loan.path.size() == n || loan.path[n] == nullptr) return loan.path.size() > n || loan.extra >= 1;
+    // Fält efter elementet (`v[0]->value`: v[*].value extra 1). En hopslagen
+    // nivå räknas bara upp när vägen slutar med [*] (opened), och steg läggs
+    // alltid till efter den, så när bara fält följer sitter den vid elementets
+    // [*]: lånet ligger i det elementet äger (v[*][*].value).
+    for (std::size_t i = n; i < loan.path.size(); ++i)
+      if (loan.path[i] == nullptr) return false;
+    return loan.extra >= 1;
   }
 
   // STN-95: en referens eller pekare till något som inte bär lån (ett element,
