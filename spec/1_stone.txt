@@ -292,6 +292,14 @@ pointer and has none in its fields, bases or elements (`constexpr int& r =
 counter;` reaches a mutable global). The analysis shall reject references to
 other global or static variables.
 
+STN-99  Static local constants
+A local variable with static storage may also be a const value type with
+constant initialization (`static const std::vector<int> none;`): no code runs
+at the first call and the value never changes. Its destructor runs at program
+exit and is accounted for as at the end of a block (STN-68). A const T&
+returned by the function may refer to it (it lives until the end of the
+program). Any other variable with static storage is rejected.
+
 == Calls ==
 
 STN-23  Transitive Stone

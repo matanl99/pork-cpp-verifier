@@ -33,15 +33,7 @@ void index_assign(std::map<int, int>& index, int key) {
   index[key] = 1;
 }
 
-// 10. Lokal static const som initieras konstant (aldrig ändrad) och returneras
-// som referens när inget annat finns.
-// rules: STN-18
-// expect: not-stone: local variable 'none' has static storage
-const std::vector<int>& targets_or_none(const std::map<int, std::vector<int>>& index, int key) {
-  static const std::vector<int> none;
-  auto it = index.find(key);
-  return it == index.end() ? none : it->second;
-}
+// 10. (Stängd av STN-99: statisk lokal konstant, nu i corpus/148_static_sentinel.cpp.)
 
 // 11. (Stängd av STN-98: range-for över en const T& från ett anrop, nu i
 // corpus/147_call_results.cpp.)

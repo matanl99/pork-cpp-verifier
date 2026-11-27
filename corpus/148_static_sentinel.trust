@@ -1,0 +1,16 @@
+type std::variant
+std::variant::*
+std::get_if
+type std::optional
+std::optional::*
+type std::vector
+type std::allocator
+std::vector::*
+std::ranges::*
+type std::map
+type std::less
+type std::pair
+std::map::*
+type std::basic_string
+std::basic_string::*
+std::map::*

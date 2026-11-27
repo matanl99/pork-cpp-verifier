@@ -1531,6 +1531,10 @@ class Checker {
              oc != nullptr && oc->getNumArgs() > 0 && oc->getDirectCallee() != nullptr &&
              returnsConstRefIntoThis(*oc->getDirectCallee()))
       e = oc->getArg(0);
+    // STN-99: en statisk lokal konstant lever till programmets slut.
+    if (const auto* dr = dyn_cast<DeclRefExpr>(stripNoOp(e));
+        dr != nullptr && constantStatics_.contains(dyn_cast<VarDecl>(dr->getDecl())))
+      return std::nullopt;
     std::optional<Path> p = pathOf(e);
     if (!p) return std::string("returns a reference that is not a field of *this or a const& parameter");
     return outlivesCall(*p, "a reference");
@@ -1768,7 +1772,17 @@ class Checker {
         bool constant = !t->isReferenceType() && !staticVariable(*vd) &&
                         (types_.isValueType(t) || types_.isOwnedArray(t)) &&
                         t.isDestructedType() == QualType::DK_none;
-        if (!constant) return "local variable '" + localName(*vd) + "' has static storage";
+        // STN-99: en const värdetyp med konstant initiering (en tom std::vector
+        // som returneras när inget annat finns): ingen kod vid första anropet,
+        // aldrig ändrad. Destruktorn körs vid programmets slut.
+        bool sentinel = !constant && !t->isReferenceType() && t.isConstQualified() &&
+                        types_.isValueType(t) && vd->hasConstantInitialization();
+        if (!constant && !sentinel) return "local variable '" + localName(*vd) + "' has static storage";
+        if (sentinel) {
+          if (auto r = destroyed(t)) return r;
+          if (auto r = expr(vd->getInit())) return r;
+          constantStatics_.insert(vd);
+        }
         continue;
       }
       if (vd->hasAttr<CleanupAttr>())  // STN-14: en funktion körs vid blockets slut
@@ -2406,6 +2420,7 @@ class Checker {
     if (const auto* vd = dyn_cast<VarDecl>(d)) {
       if (vd == initializing_)
         return "local variable '" + vd->getNameAsString() + "' is used in its own initializer";
+      if (constantStatics_.contains(vd)) return std::nullopt;  // STN-99
       return staticVariable(*vd);
     }
     return "unsupported reference to " + d->getQualifiedNameAsString() + " (" +
@@ -3898,6 +3913,7 @@ class Checker {
   const FunctionDecl* analysed_ = nullptr;          // allowUnassigned
   std::set<const VarDecl*> maybeUnassigned_;        // kan läsas otilldelade (clang)
   std::set<const VarDecl*> unassigned_;             // deklarerade utan initierare
+  std::set<const VarDecl*> constantStatics_;        // STN-99: statiska lokala konstanter
   std::set<const Expr*> readCalls_;        // icke-const anrop vars resultat bara läses (objectMode)
   std::map<const VarDecl*, const LambdaExpr*> lambdas_;  // lokala lambdor
   std::set<const Expr*> lambdaArgs_;       // STN-79: granskade lambdaargument
