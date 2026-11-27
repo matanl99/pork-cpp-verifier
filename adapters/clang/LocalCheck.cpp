@@ -4074,7 +4074,7 @@ class UnassignedUses : public UninitVariablesHandler {
 
 // Lokala variabler i fd som kan läsas innan de tilldelats, på någon väg
 // (clangs analys bakom -Wuninitialized/-Wsometimes-uninitialized). nullopt om
-// CFG:n inte kunde byggas: då krävs initierare som förut.
+// CFG:n inte kunde byggas: då krävs en initierare för varje lokal.
 std::optional<std::set<const VarDecl*>> maybeUnassignedLocals(const FunctionDecl& fd) {
   if (!fd.hasBody()) return std::nullopt;
   AnalysisDeclContextManager mgr(fd.getASTContext());

@@ -2,7 +2,7 @@
 // för konstruktorinitierare. Fälten initieras i deklarationsordning, så ett
 // tidigare aritmetiskt fält eller enumfält har ett värde; läsningen är en
 // kopia. Ett senare fält (oinitierat), ett lån eller en referens in i
-// objektet, och *this på annat sätt avvisas som förut (STN-92).
+// objektet, och *this på annat sätt avvisas (STN-66, STN-92).
 #include <span>
 #include <string>
 

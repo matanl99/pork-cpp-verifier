@@ -163,7 +163,7 @@ int self_move() {
   return a.copies;
 }
 
-// Ett flyttat objekt läses inte (STN-57 gäller som förut hos anroparen).
+// Ett flyttat objekt läses inte (STN-57 gäller hos anroparen).
 // rules: STN-72, STN-57
 // expect: not-stone: 'a.copies' is used after std::move(a)
 int read_after_move() {

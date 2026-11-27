@@ -3,7 +3,7 @@
 // konstruktorn bara värdet, och ingen användarkod kan nås: lånemodellen räknar
 // det som en läsning (STN-25, STN-62), så samma variabel får stå två gånger.
 // Andra typer kan nå användarkod som skriver (en konvertering, T(U&)) och
-// räknas som förut.
+// räknas som anrop som kan skriva argumentet.
 #include <tuple>
 #include <utility>
 #include <vector>

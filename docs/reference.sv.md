@@ -225,7 +225,7 @@ som inte räknas ut (`not computed`) uppfyller inget krav. Ett krav som inte
 håller ger dessutom ett fel på stderr och utgångsstatus 1, som `pork::stone`,
 också när funktionen inte blir Stone. En anropare som bygger på
 eftervillkoret i en funktion vars krav inte håller blir inte silver.
-Utan krav är allt som förut.
+Utan krav ändrar Bronze ingenting.
 
 ## Beroendeoraklet: `--flow-oracle`
 
@@ -448,7 +448,7 @@ void bump(int& x) {
   Anroparen kontrollerar förvillkoret och får sedan ett godtyckligt giltigt resultat som
   uppfyller eftervillkoret; `T&`-parametrar och `*this` får godtyckliga nya värden. Det
   anroparen behöver veta måste alltså stå i eftervillkoret. Funktioner utan `PORK_POST`
-  tas med som kod som förut.
+  tas med som kod.
 - En anropare är bara Silver om eftervillkoren den bygger på är bevisade, annars
   `not silver: relies on the unproven postcondition of 'f'`.
 - Se `corpus/26_silver_post.cpp`.

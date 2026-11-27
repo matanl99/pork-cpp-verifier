@@ -1,6 +1,6 @@
 // En pekare som går nedåt i en rekursiv struktur i en loop (`p = &p->kids[0]`):
-// varje varv ger en djupare plats (root.kids[*].kids[*]...), och lånemodellens
-// fixpunkt nåddes aldrig. En väg längre än en gräns kortas nu av till "någonstans
+// varje varv ger en djupare plats (root.kids[*].kids[*]...), och utan gräns
+// skulle lånemodellens fixpunkt aldrig nås. En väg längre än en gräns kortas av till "någonstans
 // i den ägda lagringen under prefixet": den kortare platsen överlappar allt den
 // ersätter, så en ändring som kan ogiltigförklara pekaren gör det fortfarande.
 #include <cstddef>

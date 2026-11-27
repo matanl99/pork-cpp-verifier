@@ -241,7 +241,7 @@ class Derived : public Base {
   Derived() : Base(3) {}
 };
 
-// Typer som varken är värdetyper eller objekttyper: som förut.
+// Typer som varken är värdetyper eller objekttyper avvisas.
 struct OwnsPointer {
   int* p;
   // rules: STN-66

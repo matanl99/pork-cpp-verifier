@@ -399,7 +399,7 @@ int no_flow(int price) {
   Guard g{price};
   return g.v;
 }
-// Utan krav: samma dom som förut.
+// Utan krav: Stone-domen gäller.
 // rules: BRZ-4
 // expect: stone
 int no_requirement(int price, bool discount) { return discount ? price / 2 : price; }

@@ -3,7 +3,7 @@
 // STN-100: i samma fullständiga uttryck som std::move(p.namn) får en väg som
 // inte överlappar den flyttade förekomma (p.stad). Ordningen mellan operanderna
 // är ospecificerad, men syskonet läses aldrig av flytten. Hela p, en väg som
-// rymmer p.namn eller p.namn själv avvisas som förut.
+// rymmer p.namn eller p.namn själv avvisas.
 //
 // STN-101: ett anrop som std.txt märker `resets` (clear: [sequence.reqmts],
 // [associative.reqmts.general], [string.modifiers] a.clear(), eftervillkor

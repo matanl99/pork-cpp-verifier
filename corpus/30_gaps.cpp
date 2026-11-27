@@ -13,7 +13,7 @@ struct Run { int who{0}; };
 using Cmd = std::variant<Run, Pass>;
 struct Planned { int tick{0}; Cmd cmd; };
 
-// 2. (Stängd av STN-79: lambda som argument, nu i corpus/71_lambda_arguments.cpp.)
+// 2. Täcks av STN-79 (lambda som argument): corpus/71_lambda_arguments.cpp.
 
 
 // Luckor från porks egen core/Classify.cpp (självanalys, 1/7 Stone).
@@ -33,10 +33,10 @@ void index_assign(std::map<int, int>& index, int key) {
   index[key] = 1;
 }
 
-// 10. (Stängd av STN-99: statisk lokal konstant, nu i corpus/148_static_sentinel.cpp.)
+// 10. Täcks av STN-99 (statisk lokal konstant): corpus/148_static_sentinel.cpp.
 
-// 11. (Stängd av STN-98: range-for över en const T& från ett anrop, nu i
-// corpus/147_call_results.cpp.)
+// 11. Täcks av STN-98 (range-for över en const T& från ett anrop):
+// corpus/147_call_results.cpp.
 
 // 12. Vektor av pekare till const-element i en const&-parameter, som lever
 // kortare än parametern (en lista av lån).
@@ -49,5 +49,5 @@ int count_positive(const std::vector<Pass>& passes) {
   return static_cast<int>(positive.size());
 }
 
-// 13. (Stängd av STN-97: fält i resultatet av det yttersta anropet, nu i
-// corpus/147_call_results.cpp.)
+// 13. Täcks av STN-97 (fält i resultatet av det yttersta anropet):
+// corpus/147_call_results.cpp.

@@ -68,7 +68,7 @@ struct Writes {
 void own_assign(Writes& w, std::span<int> t) { w = Writes{t}; }
 
 // En std-mall utan egen sammanfattning som kör användarkod (optional<Writes>
-// anropar Writes::operator=): STN-105 gäller inte, G3 avvisar som förut.
+// anropar Writes::operator=): STN-105 gäller inte, och G3 avvisar.
 struct Holder {
   std::optional<Writes> w;
 };
