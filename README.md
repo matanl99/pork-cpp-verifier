@@ -105,7 +105,10 @@ cmake -S . -B build -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 `-p build` points to the directory containing `compile_commands.json`.
 The file arguments select the translation units to analyze. Include all
 relevant source files to cover the whole project. Add `--flow` to show
-inferred dependencies or `--silver` to check for runtime errors. Run
+inferred dependencies or `--silver` to check for runtime errors. Pork also
+warns about statements and conditions in Stone functions that have no effect,
+such as `if (valid);` or a check whose result is discarded (`--no-warnings`
+turns this off). Run
 `./build/pork --help` from the Pork repository for more options.
 
 ## Use as a check for AI-generated code

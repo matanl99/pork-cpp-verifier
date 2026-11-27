@@ -50,6 +50,7 @@ void use(const Tag&) {}
 // rules: STN-80
 // expect: stone
 int tag_arg() {
+  // expect-warning: the call of 'use' has no effect
   use(tag());
   return 0;
 }

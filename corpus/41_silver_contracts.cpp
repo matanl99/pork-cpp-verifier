@@ -72,4 +72,6 @@ struct User {
 // Ett direkt anrop kontrollerar det ärvda förvillkoret.
 // rules: SLV-38
 // expect: stone: not silver: precondition of the contract of 'IClock::advance'
+// expect-warning: the call of 'Fixed::advance' has no effect
+// expect-warning: the initialisation of 't' has no effect
 void direct(Fixed& f) { int t = 100; f.advance(t); }

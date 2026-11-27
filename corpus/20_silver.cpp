@@ -175,21 +175,24 @@ int count_up(int n) { PORK_PRE(n >= 0); int s = 0; for (int i = 0; i < n; ++i) s
 // https://doi.org/10.5281/zenodo.4701387
 // rules: SLV-6
 // expect: stone: not silver: division by zero
+// expect-warning: the assignment to 'data' has no effect
 int juliet_bad() { int data; data = -1; data = 0; return 100 / data; }
 
 // rules: SLV-6
 // expect: silver
+// expect-warning: the assignment to 'data' has no effect
 int juliet_good_b2g() { int data; data = -1; data = 0; if (data != 0) return 100 / data; return 0; }
 
 // rules: SLV-6
 // expect: silver
+// expect-warning: the assignment to 'data' has no effect
 int juliet_good_g2b() { int data; data = -1; data = 7; return 100 / data; }
 
 // --- Flyttal till heltal ---
 // Fyndet ska ha källraden, inte en rad i den genererade C-koden.
 
 // rules: SLV-11
-// expect: stone: not silver: float-to-integer conversion out of range at 20_silver.cpp:193
+// expect: stone: not silver: float-to-integer conversion out of range at 20_silver.cpp:196
 int float_to_int(float f) { return int(f); }
 
 // rules: SLV-11, SLV-17

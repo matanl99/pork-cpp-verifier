@@ -28,6 +28,7 @@ void void_cast(int n) {
 // rules: STN-19, STN-20
 // expect: stone
 int void_cast_of_call(int n) {
+  // expect-warning: the call of 'empty_loop_body' has no effect
   (void)empty_loop_body(n);
   return n;
 }

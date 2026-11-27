@@ -82,7 +82,9 @@ const PassTo* leak(const Planned& p) { return std::get_if<PassTo>(&p.command); }
 // expect: stone: assuming
 // loans: ok
 void reseat(const Planned& p, const Planned& q) {
+  // expect-warning: the initialisation of 'pass' has no effect
   const auto* pass = std::get_if<PassTo>(&p.command);
+  // expect-warning: the assignment to 'pass' has no effect
   pass = std::get_if<PassTo>(&q.command);
 }
 

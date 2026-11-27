@@ -108,6 +108,7 @@ float scaled(Vec2 v) {
   PORK_PRE(v.x > -10.0F && v.x < 10.0F && v.y > -10.0F && v.y < 10.0F);
   float k = 2.0F;
   auto f = [k](float x) { return x * k; };
+  // expect-warning: the assignment to 'k' has no effect
   k = 1e30F;  // fångsten är en kopia från när lambdan skapades
   return f(v.x) + f(v.y);
 }

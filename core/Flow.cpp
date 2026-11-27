@@ -46,7 +46,7 @@ class Analysis {
 
   // BRZ-7: markörerna ("§b.i" för sats i i block b, "§cb" för villkoret i b)
   // som inte når någon utdata, som anteckningar. Körs med markers = true.
-  std::vector<std::string> noEffect() const { return noEffect_; }
+  std::vector<FlowNote> noEffect() const { return noEffect_; }
 
   FlowSummary run() {
     const std::size_t n = g_.blocks.size();
@@ -177,10 +177,10 @@ class Analysis {
       if (!out[b].reached) continue;
       const FlowBlock& blk = g_.blocks[b];
       for (std::size_t i = 0; i < blk.stmts.size(); ++i)
-        if (!blk.stmts[i].note.empty() && blk.stmts[i].kind != FlowStmt::Kind::ret &&
+        if (!blk.stmts[i].note.what.empty() && blk.stmts[i].kind != FlowStmt::Kind::ret &&
             !effective.contains(stmtMarker(b, i)))
           noEffect_.push_back(blk.stmts[i].note);
-      if (!blk.condNote.empty() && blk.succs.size() > 1 && !effective.contains(condMarker(b)))
+      if (!blk.condNote.what.empty() && blk.succs.size() > 1 && !effective.contains(condMarker(b)))
         noEffect_.push_back(blk.condNote);
     }
   }
@@ -406,7 +406,7 @@ class Analysis {
   bool markers_ = false;
   Deps sink_;                 // når kod med verkan utanför (anrop, kast)
   bool sinkExternal_ = false;  // ett sådant anrop finns
-  std::vector<std::string> noEffect_;
+  std::vector<FlowNote> noEffect_;
 };
 
 }  // namespace
@@ -459,6 +459,8 @@ std::map<std::string, FlowSummary> computeFlows(const std::map<std::string, Flow
     }
   return s;
 }
+
+std::string describe(const FlowNote& n) { return n.what + " at line " + std::to_string(n.line); }
 
 void findNoEffect(const std::map<std::string, FlowGraph>& graphs, std::map<std::string, FlowSummary>& flows) {
   for (const auto& [usr, g] : graphs) {
@@ -546,7 +548,7 @@ std::vector<std::string> flowLines(const FlowSummary& s) {
     if (o == "return") continue;
     out.push_back(line(o, d) + (s.always.contains(o) ? " (always written)" : " (maybe written)"));
   }
-  for (const std::string& n : s.noEffect) out.push_back("no effect: " + n);
+  for (const FlowNote& n : s.noEffect) out.push_back("no effect: " + describe(n));
   return out;
 }
 

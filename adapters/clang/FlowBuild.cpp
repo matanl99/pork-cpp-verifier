@@ -48,6 +48,13 @@ bool refLike(QualType t) {
   return false;
 }
 
+// Kan metoden ändra något genom *this? En const-metod kan skriva genom ett
+// referens- eller pekarfält (`game_.x = 1`): *this är då en utdata som för en
+// icke-const metod, och anroparen ser skrivningen på objektets väg.
+bool writesThis(const CXXMethodDecl& md) {
+  return !md.isConst() || refLike(md.getASTContext().getCanonicalTagType(md.getParent()));
+}
+
 class Builder {
  public:
   explicit Builder(const FunctionDecl& fd) : fd_(fd) {}
@@ -96,7 +103,7 @@ class Builder {
         // Bara satsernas villkor: i `a && b` och `c ? x : y` är grenen en del av
         // ett värde, och det värdet har eller saknar verkan som helhet.
         if (isa_and_nonnull<IfStmt, WhileStmt, ForStmt, DoStmt, SwitchStmt, CXXForRangeStmt>(b->getTerminatorStmt()))
-          block_->condNote = "the condition at " + lineOf(c);
+          block_->condNote = noteAt("the condition", c);
       }
       // Ett kast (STN-83) är ingen normal retur: blocket leder ingenstans.
       if (!throws_)
@@ -167,7 +174,7 @@ class Builder {
   void params() {
     if (const auto* md = dyn_cast<CXXMethodDecl>(&fd_); md != nullptr && md->isInstance()) {
       g_.params.push_back("this");
-      g_.outputs.push_back(isa<CXXConstructorDecl>(md) || !md->isConst());
+      g_.outputs.push_back(isa<CXXConstructorDecl>(md) || writesThis(*md));
     }
     for (unsigned i = 0; i < fd_.getNumParams(); ++i) {
       const ParmVarDecl* p = fd_.getParamDecl(i);
@@ -596,7 +603,7 @@ class Builder {
       // Ett dispatchande anrop kan nå vilken override som helst: okänd kod
       // (konservativt), inte den statiskt valda metodens flöde.
       if (isDispatch(*c, *md, object)) fc.usr.clear();
-      bool writes = !md->isConst();
+      bool writes = writesThis(*md);
       if (writes && !p) {
         fail("call of '" + fc.name + "' changes an object that is not a known place");
         return {};
@@ -653,7 +660,7 @@ class Builder {
       }
     }
     unsigned id = fc.id;
-    std::string note = isExpressionStatement(c) ? "the call of '" + fc.name + "' at " + lineOf(c) : "";
+    FlowNote note = isExpressionStatement(c) ? noteAt("the call of '" + fc.name + "'", c) : FlowNote{};
     block_->stmts.push_back({FlowStmt::Kind::call, {}, {}, std::move(fc), std::move(note)});
     return {FlowValue::result(id)};
   }
@@ -668,7 +675,7 @@ class Builder {
     append(values, indexOf(lhs));
     if (readOld) values.push_back(FlowValue::read(*p));
     block_->stmts.push_back({weak ? FlowStmt::Kind::weak : FlowStmt::Kind::assign, *p, std::move(values), {},
-                             "the assignment to '" + display(*p) + "' at " + lineOf(lhs)});
+                             noteAt("the assignment to '" + display(*p) + "'", lhs)});
   }
 
   // Platsen för elementen i range-for: behållaren är en känd plats och en typ
@@ -816,10 +823,11 @@ class Builder {
     eval(ex);  // anrop som sats
   }
 
-  // BRZ-7: "at line N" för anteckningarna.
-  std::string lineOf(const Stmt* s) const {
+  // BRZ-7: platsen (där makron används) för anteckningarna.
+  FlowNote noteAt(std::string what, const Stmt* s) const {
     const SourceManager& sm = fd_.getASTContext().getSourceManager();
-    return "line " + std::to_string(sm.getExpansionLineNumber(s->getBeginLoc()));
+    SourceLocation l = sm.getExpansionLoc(s->getBeginLoc());
+    return {std::move(what), sm.getExpansionLineNumber(l), sm.getExpansionColumnNumber(l)};
   }
 
   static std::string display(const std::string& p) {
@@ -932,9 +940,9 @@ class Builder {
   }
 
   // En loopvariabel i range-for behöver inte användas (`for (auto x : v) ++n;`).
-  std::string initNote(const VarDecl& vd) const {
-    if (vd.isCXXForRangeDecl() || vd.isImplicit() || isa<DecompositionDecl>(vd)) return "";
-    return "the initialisation of '" + vd.getNameAsString() + "' at " + lineOf(&*vd.getInit());
+  FlowNote initNote(const VarDecl& vd) const {
+    if (vd.isCXXForRangeDecl() || vd.isImplicit() || isa<DecompositionDecl>(vd)) return {};
+    return noteAt("the initialisation of '" + vd.getNameAsString() + "'", vd.getInit());
   }
 
   // Kör förstörelsen av t egen kod? En implicit eller = default-destruktor

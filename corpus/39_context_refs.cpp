@@ -172,6 +172,7 @@ void dead_before(Board& b, ISink& s) { Cell& c = b.cells[0]; c.v = 1; s.flush();
 // En lokal variabel når porten inte.
 // rules: STN-54
 // expect: stone: assuming
+// expect-warning: the assignment to 'b.cells[*].v' has no effect
 void local_board(ISink& s) { Board b; b.cells.push_back(Cell{0}); Cell& c = b.cells[0]; s.flush(); c.v = 1; }
 
 // Ett fält (en väg, inget lån) kan inte dingla.

@@ -46,3 +46,22 @@ void sorted(std::vector<int>& v) { std::sort(v.begin(), v.end()); }
 // En lokal lambda: fångsten per värde (tests/data/flow/10_lambda.cpp).
 // flow: return <- a
 int with_lambda(int a) { auto f = [a] { return a; }; return f(); }
+
+// En const-metod kan skriva genom ett referensfält: *this är en utdata, och
+// anroparen ser skrivningen (inte ett gammalt värde av c.x).
+struct Ctx {
+  int x;
+};
+struct Setter {
+  Ctx& c;
+  // flow: this.c.x <- a (always written)
+  void set(int a) const { c.x = a; }
+  // flow: return <- this.c.x
+  int get() const { return c.x; }
+  // flow: return <- a
+  // flow: this.c.x <- a (always written)
+  int set_and_get(int a) const {
+    set(a);
+    return get();
+  }
+};

@@ -93,6 +93,7 @@ int modify_while_borrowed(std::vector<Planned>& planned) {
 // rules: STN-39, STN-62, SLV-2
 // expect: stone: not silver: cannot translate to C: assignment to a pointer
 int reseat(const Planned& a, const Planned& b) {
+  // expect-warning: the initialisation of 'pass' has no effect
   const Pass* pass = as_pass(a);
   pass = as_pass(b);
   return pass == nullptr ? 0 : pass->to;

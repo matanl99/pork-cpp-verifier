@@ -27,7 +27,7 @@ enum class OracleMode { off, on, selfTest };
 
 int analyse(IFactsSource& source, const TrustList& trust, IReport& report,
             IProver* prover = nullptr, unsigned jobs = 1, const std::vector<std::string>& only = {},
-            OracleMode oracle = OracleMode::off, bool showFlow = false);
+            OracleMode oracle = OracleMode::off, bool showFlow = false, bool warnings = true);
 
 // Ligger `file` under någon av katalogerna (lexikalt, efter normalisering)?
 bool underAny(const std::string& file, const std::vector<std::string>& dirs);

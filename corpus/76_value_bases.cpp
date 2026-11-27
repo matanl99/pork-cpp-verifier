@@ -93,6 +93,7 @@ void two(int& a, int& b) {
 // rules: STN-2, STN-62
 // expect: stone
 int hidden_distinct() {
+  // expect-warning: the initialisation of 'h' has no effect
   Hide h{{1, 2}, 3};
   two(h.x, h.Coordinates::x);
   return h.x;

@@ -99,3 +99,10 @@ TEST(TextReport, StoneNotSilverPutsAssumptionsLast) {
             "a.cpp:3:5: ns::f: stone: not silver: division by zero in a / b at x.cpp:4; "
             "assuming std::hypot\n");
 }
+
+TEST(TextReport, WarningGoesToErrInCompilerFormat) {
+  std::ostringstream out, err;
+  pork::TextReport(out, err).warning({"a.cpp", 7, 9, "the condition has no effect"});
+  EXPECT_EQ(out.str(), "");
+  EXPECT_EQ(err.str(), "a.cpp:7:9: warning: the condition has no effect\n");
+}

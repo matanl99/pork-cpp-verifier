@@ -99,6 +99,9 @@ llvm::cl::list<std::string> onlyDirs(
 llvm::cl::opt<bool> flowOpt(
     "flow", llvm::cl::desc("Show the derived data flow of Stone functions (Bronze step 1, no verdict)"),
     llvm::cl::cat(category));
+llvm::cl::opt<bool> noWarnings(
+    "no-warnings", llvm::cl::desc("Do not warn about statements and conditions without effect (BRZ-7)"),
+    llvm::cl::cat(category));
 llvm::cl::opt<bool> flowOracleOpt(
     "flow-oracle",
     llvm::cl::desc("Try to refute --flow with two runs per output part (needs --flow --silver; a test oracle)"),
@@ -186,7 +189,7 @@ int main(int argc, const char** argv) {
     only.emplace_back(abs);
   }
   pork::TextReport report(std::cout, std::cerr);
-  if (!silverOpt) return pork::analyse(source, trust, report, nullptr, 1, only, pork::OracleMode::off, flowOpt);
+  if (!silverOpt) return pork::analyse(source, trust, report, nullptr, 1, only, pork::OracleMode::off, flowOpt, !noWarnings);
 
   std::vector<std::string> contracts{PORK_CONTRACTS_DIR "/std.c"};
   contracts.insert(contracts.end(), contractFiles.begin(), contractFiles.end());
@@ -244,7 +247,7 @@ int main(int argc, const char** argv) {
     }
   }
   if (noSilverCache || !keepC.empty()) {  // --keep-c: programmen ska faktiskt skrivas
-    int rc = pork::analyse(source, trust, report, &prover, jobs, only, oracleMode(), flowOpt);
+    int rc = pork::analyse(source, trust, report, &prover, jobs, only, oracleMode(), flowOpt, !noWarnings);
     return rc;
   }
 
@@ -259,7 +262,7 @@ int main(int argc, const char** argv) {
     dir = std::string(home);
   }
   pork::CachingProver cached(prover, {dir, silverSlow});
-  int rc = pork::analyse(source, trust, report, &cached, jobs, only, oracleMode(), flowOpt);
+  int rc = pork::analyse(source, trust, report, &cached, jobs, only, oracleMode(), flowOpt, !noWarnings);
   if (cached.hits() + cached.misses() > 0)
     llvm::errs() << "pork: silver: " << cached.hits() << " of " << cached.hits() + cached.misses()
                  << " from cache (" << dir << ")\n";

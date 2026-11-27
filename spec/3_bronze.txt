@@ -99,7 +99,12 @@ that is the whole statement (its result discarded, also with a cast to void
 or as a for step), and the condition of an if, while, for, do or switch
 (`if (valid);`). The branches inside `a && b` and `c ? x : y` are part of a
 value and are not reported on their own. Code that is never reached is not
-reported. The search is SPARK's ineffective statements; a requirement only
+reported. Also without a requirement and without --flow, pork shall print
+`<file>:<line>:<col>: warning: <what> has no effect` on stderr at the
+statement or condition, for every reported Stone function, once per place
+(the instances of a template share it), after the verdict lines; the
+verdicts and the exit status do not change. --no-warnings turns the
+warnings off. The search is SPARK's ineffective statements; a requirement only
 bounds what an output may depend on, so without this rule a function that
 depends on too little (a condition that guards nothing, a discarded check)
 would meet every requirement.

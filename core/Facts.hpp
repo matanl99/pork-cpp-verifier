@@ -166,6 +166,15 @@ using FactsMap = std::map<std::string, FunctionFacts>;  // usr -> fakta
 // BRZ-6: ett PORK_DEPENDS utanför varje funktionskropp (fältinitierare,
 // initierare för en global, defaultargument). Det hör inte till någon
 // funktion och håller aldrig.
+// En varning som inte ändrar domen eller exitstatus (BRZ-7: en sats utan verkan).
+struct Warning {
+  std::string file;
+  unsigned line = 0;
+  unsigned column = 0;
+  std::string message;
+  auto operator<=>(const Warning&) const = default;
+};
+
 struct StrayRequirement {
   std::string file;
   unsigned line = 0;

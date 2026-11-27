@@ -28,6 +28,8 @@ class FakeReport : public pork::IReport {
   }
   void error(const std::string& m) override { errors.push_back(m); }
   void strayRequirement(const pork::StrayRequirement& s) override { strays.push_back(s.where); }
+  std::vector<std::string> warnings;
+  void warning(const pork::Warning& w) override { warnings.push_back(w.message); }
 };
 
 pork::FunctionFacts at(const std::string& name, const std::string& file, unsigned line) {
@@ -125,6 +127,39 @@ TEST(Analyse, FlowRequirementThatDoesNotHoldIsViolation) {
 
   EXPECT_EQ(pork::analyse(src, {}, rep), pork::requirementViolated);
   EXPECT_EQ(rep.violations, (std::vector<std::string>{"bad"}));
+}
+
+// BRZ-7: en sats utan verkan i en Stone-funktion ger en varning också utan
+// krav, och varken domen eller exitstatus ändras. Två instanser av en mall
+// med samma plats ger en varning.
+TEST(Analyse, StatementWithoutEffectIsAWarning) {
+  auto graph = [] {
+    pork::FlowGraph g;
+    g.blocks.resize(1);
+    g.entry = g.exit = 0;
+    g.params = {"price"};
+    g.outputs = {false};
+    g.returnsValue = true;
+    g.blocks[0].stmts.push_back({pork::FlowStmt::Kind::assign, "t~1", {pork::FlowValue::read("price")}, {},
+                                 {"the initialisation of 't'", 4, 3}});
+    g.blocks[0].stmts.push_back({pork::FlowStmt::Kind::ret, {}, {pork::FlowValue::read("price")}, {}});
+    return g;
+  };
+  auto a = at("f<int>", "x.cpp", 3);
+  a.flow = graph();
+  auto b = at("f<long>", "x.cpp", 3);
+  b.flow = graph();
+  FakeSource src;
+  src.result = factsOf({a, b});
+
+  FakeReport rep;
+  EXPECT_EQ(pork::analyse(src, {}, rep), pork::ok);
+  EXPECT_EQ(rep.warnings, (std::vector<std::string>{"the initialisation of 't' has no effect"}));
+  EXPECT_TRUE(rep.violations.empty());
+
+  FakeReport quiet;
+  EXPECT_EQ(pork::analyse(src, {}, quiet, nullptr, 1, {}, pork::OracleMode::off, false, false), pork::ok);
+  EXPECT_TRUE(quiet.warnings.empty());
 }
 
 // BRZ-6: ett krav i en funktion som inte blev Stone (global, felplacerat

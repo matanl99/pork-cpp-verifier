@@ -30,6 +30,8 @@ fel men beskriver det olika:
     // expect: stone: not silver: <...>  Stone, men inte bevisat Silver
     // expect-violation[: namn]          pork::stone- eller PORK_DEPENDS-krav som bryts (error, exit 1);
                                       för ett krav utanför en funktionskropp: raden före kravet
+    // expect-warning: <meddelande>      varning på raden under (BRZ-7, t.ex. "the condition has no effect");
+                                      också inuti en funktionskropp
 
 Kontrakt för betrodda funktioner (Silver): `NN_namn.contracts.c` bredvid fallet
 (`contracts.c` i en katalog), skickas som `--contracts`.
@@ -53,7 +55,7 @@ Testet fallerar om
   - en förväntning saknar motsvarande rad i utdata,
   - pork rapporterar en funktion som saknar förväntning,
   - beskedet eller orsaken inte stämmer,
-  - förväntade och faktiska kravbrott (stderr) skiljer sig,
+  - förväntade och faktiska kravbrott eller varningar (stderr) skiljer sig,
   - exit-koden inte är 1 när kravbrott förväntas, annars 0.
 """
 
@@ -70,6 +72,8 @@ from pathlib import Path
 EXPECT = re.compile(
     r"//\s*expect(?:\[(\w+)\])?:\s*(?:(\S+?):\s+)?(silver|bronze|stone|not-stone|trusted)(?::\s*(.+?))?\s*$")
 EXPECT_VIOLATION = re.compile(r"//\s*expect-violation(?::\s*(\S+))?\s*$")
+EXPECT_WARNING = re.compile(r"//\s*expect-warning:\s*(.+?)\s*$")
+WARNING = re.compile(r"^(.*):(\d+):(\d+): warning: (.+? has no effect)$")
 OUTPUT = re.compile(r"^(.*):(\d+):(\d+): (.+?): (silver|bronze|stone|not-stone|trusted)(?:: (.*))?$")
 PORK_ARGS = re.compile(r"//\s*pork-args:\s*(.+?)\s*$")
 RULES = re.compile(r"//\s*rules:\s*(.+?)\s*$")
@@ -80,19 +84,23 @@ VIOLATION = re.compile(r"^(.*):(\d+):(\d+): error: (?:'(.+?)' (?:is marked pork:
 
 
 def expectations(files, prover="cbmc"):
-    """Returnerar (exp, violations).
+    """Returnerar (exp, violations, warnings).
     exp: (fil, rad, namn eller None) -> (besked, detalj).
     violations: mängd av (fil, rad, namn eller None).
+    warnings: mängd av (fil, rad, meddelande).
     Raden är den första raden under förväntningarna som inte själv är en."""
-    exp, violations = {}, set()
+    exp, violations, warnings = {}, set(), set()
     for f in files:
-        pending, pending_v = [], []
+        pending, pending_v, pending_w = [], [], []
         for n, line in enumerate(f.read_text().splitlines(), start=1):
             if m := EXPECT.search(line):
                 pending.append(m)
                 continue
             if m := EXPECT_VIOLATION.search(line):
                 pending_v.append(m)
+                continue
+            if m := EXPECT_WARNING.search(line):
+                pending_w.append(m)
                 continue
             if LOANS.search(line):
                 continue  # lånemodellens förväntan, se check_loans.py
@@ -103,8 +111,10 @@ def expectations(files, prover="cbmc"):
                 exp[(f.resolve(), n, p.group(2))] = (p.group(3), p.group(4))
             for p in pending_v:
                 violations.add((f.resolve(), n, p.group(1)))
-            pending, pending_v = [], []
-    return exp, violations
+            for p in pending_w:
+                warnings.add((f.resolve(), n, p.group(1)))
+            pending, pending_v, pending_w = [], [], []
+    return exp, violations, warnings
 
 
 MARK = re.compile(r"\s*\[(allows|rejects|test:[^\]]*)\]")
@@ -285,7 +295,7 @@ def run_case(pork, case, files, extra, prover):
     if "--silver" in extra:
         cmd = [*memory_cap(), *cmd]
     proc = subprocess.run(cmd, capture_output=True, text=True)
-    exp, violations = expectations([*files, *header_files(case)], prover)
+    exp, violations, warnings = expectations([*files, *header_files(case)], prover)
     want_rc = 1 if violations else 0
     if proc.returncode != want_rc:
         return [f"pork exited {proc.returncode}, expected {want_rc}:\n{proc.stderr}"]
@@ -333,6 +343,16 @@ def run_case(pork, case, files, extra, prover):
     for key in violations - seen_v:
         name = f" ({key[2]})" if key[2] else ""
         errors.append(f"no violation reported at {key[0]}:{key[1]}{name}")
+
+    got_w = set()
+    for line in proc.stderr.splitlines():
+        if m := WARNING.match(line):
+            key = (Path(m.group(1)).resolve(), int(m.group(2)), m.group(4))
+            got_w.add(key)
+            if key not in warnings:
+                errors.append(f"unexpected warning: {line}")
+    for key in warnings - got_w:
+        errors.append(f"no warning at {key[0]}:{key[1]}: {key[2]}")
     return errors
 
 

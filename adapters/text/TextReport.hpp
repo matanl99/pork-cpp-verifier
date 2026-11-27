@@ -13,7 +13,8 @@ namespace pork {
 //   fil:rad:kolumn: namn: stone: assuming a, b
 //   fil:rad:kolumn: namn: trusted
 //   fil:rad:kolumn: namn: not-stone: orsak
-// err, brutna krav:
+// err, varningar och brutna krav:
+//   fil:rad:kolumn: warning: the condition has no effect
 //   fil:rad:kolumn: error: 'namn' is marked pork::stone but is not-stone: orsak
 class TextReport : public IReport {
  public:
@@ -21,6 +22,7 @@ class TextReport : public IReport {
   void function(const FunctionFacts& f, const Verdict& v) override;
   void violation(const FunctionFacts& f, const Verdict& v) override;
   void strayRequirement(const StrayRequirement& s) override;
+  void warning(const Warning& w) override;
   void error(const std::string& message) override;
 
  private:

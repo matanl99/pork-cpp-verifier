@@ -74,6 +74,8 @@ class IReport {
   virtual void violation(const FunctionFacts& f, const Verdict& v) = 0;
   // Ett PORK_DEPENDS utanför varje funktionskropp (BRZ-6). Efter violation().
   virtual void strayRequirement(const StrayRequirement& s) = 0;
+  // En varning (BRZ-7). Efter alla function(), före violation().
+  virtual void warning(const Warning& w) = 0;
   virtual void error(const std::string& message) = 0;
 };
 

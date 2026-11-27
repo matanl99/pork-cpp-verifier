@@ -77,6 +77,10 @@ void TextReport::violation(const FunctionFacts& f, const Verdict& v) {
   err_ << '\n';
 }
 
+void TextReport::warning(const Warning& w) {
+  err_ << w.file << ':' << w.line << ':' << w.column << ": warning: " << w.message << '\n';
+}
+
 void TextReport::error(const std::string& message) { err_ << "pork: " << message << '\n'; }
 
 }  // namespace pork

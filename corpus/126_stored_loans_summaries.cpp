@@ -88,7 +88,9 @@ char nested_field(const std::string& s, std::string& t) {
 // rules: STN-93
 // expect: stone: assuming
 char temporary_unused() {
+  // expect-warning: the initialisation of 'c' has no effect
   Cursor c{};
+  // expect-warning: the call of 'store' has no effect
   store(c, std::string("abcdefghijklmnopqrstuvwxyz0123456789"));
   return 'x';
 }

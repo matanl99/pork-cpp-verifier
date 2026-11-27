@@ -42,7 +42,9 @@ void shift(Range& r) { r.lo = r.lo + 1; }
 // expect: silver
 void swap_ends(Range& r) {
   const int lo = r.lo;
+  // expect-warning: the assignment to 'r.lo' has no effect
   r.lo = r.hi;
+  // expect-warning: the assignment to 'r.hi' has no effect
   r.hi = lo;
   r.lo = lo;
   r.hi = lo;

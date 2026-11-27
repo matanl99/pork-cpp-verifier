@@ -20,7 +20,7 @@ bool underAny(const std::string& file, const std::vector<std::string>& dirs) {
 }
 
 int analyse(IFactsSource& source, const TrustList& trust, IReport& report, IProver* prover,
-            unsigned jobs, const std::vector<std::string>& only, OracleMode oracle, bool showFlow) {
+            unsigned jobs, const std::vector<std::string>& only, OracleMode oracle, bool showFlow, bool warnings) {
   auto facts = source.collect();
   if (!facts) {
     report.error(facts.error());
@@ -43,7 +43,7 @@ int analyse(IFactsSource& source, const TrustList& trust, IReport& report, IProv
     if (f.flow) graphs.emplace(usr, *f.flow);
   }
   std::map<std::string, FlowSummary> flows;
-  if (!graphs.empty() && (showFlow || requirements)) {
+  if (!graphs.empty() && (showFlow || requirements || warnings)) {
     flows = computeFlows(graphs);
     findNoEffect(graphs, flows);
   }
@@ -84,8 +84,8 @@ int analyse(IFactsSource& source, const TrustList& trust, IReport& report, IProv
       }
     // BRZ-7: en sats eller ett villkor utan verkan.
     if (v.bronze->empty() && !s->second.noEffect.empty()) {
-      const std::vector<std::string>& n = s->second.noEffect;
-      v.bronze = n.front() + " has no effect" + (n.size() > 1 ? " (+" + std::to_string(n.size() - 1) + " more)" : "");
+      const std::vector<FlowNote>& n = s->second.noEffect;
+      v.bronze = describe(n.front()) + " has no effect" + (n.size() > 1 ? " (+" + std::to_string(n.size() - 1) + " more)" : "");
     }
   }
 
@@ -117,6 +117,19 @@ int analyse(IFactsSource& source, const TrustList& trust, IReport& report, IProv
   });
 
   for (const FunctionFacts* f : order) report.function(*f, verdict.at(f->usr));
+
+  // BRZ-7: satser utan verkan i varje Stone-funktion, också utan krav. En mall
+  // ger samma plats en gång per instans: en gång räcker.
+  if (warnings) {
+    std::set<Warning> found;
+    for (const FunctionFacts* f : order) {
+      auto s = flows.find(f->usr);
+      if (s == flows.end() || !s->second.known || !verdict.at(f->usr).isStone()) continue;
+      for (const FlowNote& n : s->second.noEffect)
+        found.insert({f->file, n.line, n.column, n.what + " has no effect"});
+    }
+    for (const Warning& w : found) report.warning(w);
+  }
 
   int rc = ok;
   for (const FunctionFacts* f : order) {

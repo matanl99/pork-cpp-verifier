@@ -52,6 +52,7 @@ void forward(int& a) { inc(a); }
 
 // rules: STN-21
 // expect: stone
+// expect-warning: the initialisation of 'b' has no effect
 int effect_contexts(int a) { int r = add_and_return(a); int b = 0; b = add_and_return(a); return r + b; }
 
 // rules: STN-21

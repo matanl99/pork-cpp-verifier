@@ -6,4 +6,5 @@
 
 // rules: STN-47
 // expect: stone
+// expect-warning: the initialisation of 'unused' has no effect
 int unused_local(int a) { int unused = 0; return a; }

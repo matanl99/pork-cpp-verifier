@@ -43,13 +43,21 @@ struct FlowCall {
   bool operator==(const FlowCall&) const = default;
 };
 
+// BRZ-7: en sats eller ett villkor i meddelanden. Tom `what`: dold, rapporteras inte.
+struct FlowNote {
+  std::string what;  // "the call of 'f'", "the condition"
+  unsigned line = 0;
+  unsigned column = 0;
+  bool operator==(const FlowNote&) const = default;
+};
+
 struct FlowStmt {
   enum class Kind { assign, weak, call, ret };
   Kind kind = Kind::assign;
   std::string target;  // assign, weak (weak: det gamla värdet kan finnas kvar)
   FlowValues values;   // assign, weak, ret
   FlowCall call;       // call
-  std::string note;    // BRZ-7: satsen i meddelanden ("the call of 'f' at line 14"); tom: dold, rapporteras inte
+  FlowNote note;       // BRZ-7
   bool operator==(const FlowStmt&) const = default;
 };
 
@@ -57,7 +65,7 @@ struct FlowBlock {
   std::vector<FlowStmt> stmts;
   FlowValues cond;              // villkoret som väljer efterföljare
   std::vector<unsigned> succs;  // index i FlowGraph::blocks
-  std::string condNote;         // BRZ-7: "the condition at line 5"
+  FlowNote condNote;            // BRZ-7: villkoret
   bool operator==(const FlowBlock&) const = default;
 };
 
@@ -98,7 +106,7 @@ struct FlowSummary {
   bool external = false;
   // BRZ-7: satser och villkor vars värde inte når någon utdata. Räknas efter
   // fixpunkten (inte en del av den).
-  std::vector<std::string> noEffect;
+  std::vector<FlowNote> noEffect;
   bool operator==(const FlowSummary&) const = default;
 };
 
@@ -108,6 +116,9 @@ struct FlowSummary {
 std::map<std::string, FlowSummary> computeFlows(const std::map<std::string, FlowGraph>& graphs);
 
 // BRZ-7: fyller FlowSummary::noEffect för varje funktion med känt flöde.
+// "the condition at line 5"
+std::string describe(const FlowNote& n);
+
 void findNoEffect(const std::map<std::string, FlowGraph>& graphs, std::map<std::string, FlowSummary>& flows);
 
 // En funktion för sig, med givna sammanfattningar för de anropade.

@@ -7,11 +7,12 @@
 
 // Den tomma satsen är hela if-kroppen: rösten räknas alltid.
 // rules: BRZ-7, STN-13
-// expect: stone: not bronze: the condition at line 15 has no effect
+// expect: stone: not bronze: the condition at line 16 has no effect
 // expect-violation
 unsigned count_vote(unsigned count, bool valid) {
   PORK_DEPENDS_RESULT(count, valid);
   // clang-format off
+  // expect-warning: the condition has no effect
   if (valid);
   // clang-format on
   {
@@ -42,10 +43,11 @@ struct Answer {
 
 // Kontrollen kastas med en cast till void: poäng också när omgången är stängd.
 // rules: BRZ-7, STN-19
-// expect: stone: not bronze: the call of 'round_is_open' at line 49 has no effect
+// expect: stone: not bronze: the call of 'round_is_open' at line 51 has no effect
 // expect-violation
 bool discarded_check(const Answer& answer) {
   PORK_DEPENDS_RESULT(answer);
+  // expect-warning: the call of 'round_is_open' has no effect
   static_cast<void>(round_is_open(answer));
   return answer.correct;
 }
@@ -60,11 +62,13 @@ bool both_checks(const Answer& answer) {
 
 // En död tilldelning.
 // rules: BRZ-7
-// expect: stone: not bronze: the initialisation of 'total' at line 67 has no effect (+1 more)
+// expect: stone: not bronze: the initialisation of 'total' at line 70 has no effect (+1 more)
 // expect-violation
 int dead_store(int a, int b) {
   PORK_DEPENDS_RESULT(a, b);
+  // expect-warning: the initialisation of 'total' has no effect
   int total = 0;
+  // expect-warning: the assignment to 'total' has no effect
   total = a;
   total = b;
   return total;

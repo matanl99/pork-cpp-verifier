@@ -150,7 +150,7 @@ int sum(const std::vector<int>& v) {
   return s;
 }
 // Skrivning genom en icke-const iterator följs inte (som förut).
-// flow: not computed: call of '__gnu_cxx::__normal_iterator<int *, std::vector<int>>::operator++' changes an object that is not a known place
+// flow: not computed: call of '__gnu_cxx::__normal_iterator<int *, std::vector<int>>::operator*' changes an object that is not a known place
 void fill_all(std::vector<int>& v, int x) {
   for (int& e : v) e = x;
 }

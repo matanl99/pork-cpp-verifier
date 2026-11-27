@@ -76,11 +76,22 @@ count_vote: stone
   flow: no effect: the condition at line 5
 ```
 
+Också utan krav och utan `--flow` skrivs varje fynd som en varning på stderr, en gång per plats
+(mallens instanser delar den), utan att domen eller exitstatus ändras (`--no-warnings` stänger av):
+
+```
+empty_guard_case.cpp:5:9: warning: the condition has no effect
+```
+
+Korpusen förväntar varje varning med `// expect-warning: <meddelande>` på raden ovanför.
+
 En funktion med krav är då inte bronze. Att nå en utdata betyder att värdet, direkt eller
 genom senare satser, villkor och anrop, når returvärdet, en utdataparameter vid retur eller
 där funktionen kastar, eller ett anrop av okänd eller betrodd kod (eller av en funktion med
 sådan verkan, eller som kan kasta). Det räknas med en markör per sats och villkor i samma
-analys som beroendena (`findNoEffect` i `core/Flow.cpp`), efter fixpunkten. Rapporteras:
+analys som beroendena (`findNoEffect` i `core/Flow.cpp`), efter fixpunkten. En const-metod i en klass med referens- eller
+pekarfält ändrar `*this` som en icke-const metod (`game_.x = 1` skriver genom referensen), också
+vid anropet. Rapporteras:
 initiering av en lokal (inte en range-for-variabel), tilldelning, ett anrop som är hela
 satsen och villkoret i if, while, for, do och switch; grenarna i `a && b` och `c ? x : y` är
 delar av ett värde. Kod som aldrig nås rapporteras inte.
