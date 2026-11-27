@@ -227,6 +227,11 @@ add_test(NAME summaries_bad_file
           -p ${CMAKE_CURRENT_SOURCE_DIR}/corpus ${CMAKE_CURRENT_SOURCE_DIR}/corpus/51_loan_model.cpp)
 set_tests_properties(summaries_bad_file PROPERTIES
   PASS_REGULAR_EXPRESSION "bad.summaries:2: unknown effect 'read'")
+# Ett kompileringsfel: ingen analys av den ofullständiga AST:n, status 2.
+add_test(NAME compile_error
+  COMMAND pork ${CMAKE_CURRENT_SOURCE_DIR}/tests/data/compile_error.cpp -- -std=c++23)
+set_tests_properties(compile_error PROPERTIES
+  PASS_REGULAR_EXPRESSION "pork: compilation failed" FAIL_REGULAR_EXPRESSION "Assertion")
 add_test(NAME summaries_override
   COMMAND pork --loans=report --summaries=${CMAKE_CURRENT_SOURCE_DIR}/tests/data/override.summaries
           -p ${CMAKE_CURRENT_SOURCE_DIR}/corpus ${CMAKE_CURRENT_SOURCE_DIR}/corpus/51_loan_model.cpp)

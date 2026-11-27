@@ -213,6 +213,9 @@ class Consumer : public ASTConsumer {
            std::vector<StrayRequirement>& stray, bool flow)
       : trust_(trust), translate_(translate), loans_(loans), facts_(facts), stray_(stray), flow_(flow) {}
   void HandleTranslationUnit(ASTContext& ctx) override {
+    // Efter ett kompileringsfel är AST:n ofullständig (typer saknas): den
+    // analyseras inte, och körningen slutar med "compilation failed".
+    if (ctx.getDiagnostics().hasErrorOccurred()) return;
     Visitor v(ctx, trust_, translate_, loans_, facts_, stray_, flow_);
     v.TraverseDecl(ctx.getTranslationUnitDecl());
     v.finish();
