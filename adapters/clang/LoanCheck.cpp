@@ -153,6 +153,22 @@ Place opened(Place p, bool nested = true) {
   return p;
 }
 
+// Vidgning: en väg längre än kMaxPath kortas av till ett prefix som slutar
+// med [*] och mättat extra, "någonstans i den ägda lagringen under prefixet".
+// Annars växer vägen i en loop som går nedåt i en rekursiv struktur
+// (`p = &p->front()` ger j.kids[*].kids[*]...) och fixpunkten nås aldrig. Den
+// kortare platsen överlappar allt den ersätter ([*] passar alla fält) och
+// ogiltigförklaras av varje ändring som överlappar (mättat extra): bara fler
+// fel, aldrig färre. Bara för lån: tomhet (empty/full) kortas inte av.
+constexpr std::size_t kMaxPath = 10;
+
+void widen(Place& p) {
+  if (p.path.size() <= kMaxPath) return;
+  p.path.resize(kMaxPath);
+  p.path.back() = nullptr;
+  p.extra = kMaxExtra;
+}
+
 struct Loan {
   Place place;
   bool exclusive = false;
@@ -465,11 +481,20 @@ class LoanChecker {
           }
       return s;
     };
-    for (bool changed = true; changed;) {
+    // Överföringen är inte monoton (en flytt tömmer en variabel som en
+    // tilldelning fyller igen), så tillståndet kan svänga i en loop. Efter
+    // kJoinAfter varv slås det nya ihop med det gamla: fler lån och fler
+    // "kan vara tom", färre "säkert full". Det kan bara växa i en ändlig mängd
+    // (lånens platser är vidgade), så loopen tar slut, och det ger bara fler fel.
+    constexpr unsigned kJoinAfter = 8;
+    unsigned round = 0;
+    for (bool changed = true; changed; ++round) {
       changed = false;
       for (const CFGBlock* b : *order) {
         State s = in(b);
         block(*b, s);
+        if (round >= kJoinAfter)
+          if (auto it = out.find(b); it != out.end()) join(s, it->second);
         if (out[b] != s) {
           out[b] = std::move(s);
           changed = true;
@@ -491,7 +516,20 @@ class LoanChecker {
  private:
   // --- Tillstånd och lån -----------------------------------------------------
 
-  int issue(const Place& p, bool exclusive) {
+  // Varje lån i tillståndet passerar här: med vidgade platser är lånen
+  // ändligt många, så fixpunkten nås också när en väg växer på ett ställe som
+  // inte vidgar själv.
+  // `s` blir minst lika försiktigt som `old`.
+  static void join(State& s, const State& old) {
+    for (const auto& [v, ids] : old) s[v].insert(ids.begin(), ids.end());
+    s.heldOutside.insert(old.heldOutside.begin(), old.heldOutside.end());
+    s.empty.insert(old.empty.begin(), old.empty.end());
+    std::erase_if(s.full, [&](const Place& f) { return !old.full.contains(f); });
+    s.outsideEmpty = s.outsideEmpty || old.outsideEmpty;
+  }
+
+  int issue(Place p, bool exclusive) {
+    widen(p);
     auto key = std::make_pair(p, exclusive);
     if (auto it = loanIds_.find(key); it != loanIds_.end()) return it->second;
     loans_.push_back({p, exclusive});
@@ -909,6 +947,7 @@ class LoanChecker {
       const FieldDecl* step = f->getParent()->isUnion() ? nullptr : f;
       for (PlaceRef& r : base) {
         r.place.path.push_back(step);
+        widen(r.place);
         r.loan = -1;
         r.exclusive = r.exclusive && exclusive;
       }
@@ -1332,6 +1371,7 @@ class LoanChecker {
     for (PlaceRef& b : base) {
       if (rest != path.end()) b.loan = -1;
       b.place.path.insert(b.place.path.end(), rest, path.end());
+      widen(b.place);
     }
     return base;
   }
@@ -1346,6 +1386,7 @@ class LoanChecker {
     for (PlaceRef& b : base) {
       if (r.place.path.size() > 1) b.loan = -1;
       b.place.path.insert(b.place.path.end(), r.place.path.begin() + 1, r.place.path.end());
+      widen(b.place);
     }
     return base;
   }
@@ -1433,6 +1474,7 @@ class LoanChecker {
           continue;
         }
         Place o = opened(r.place, nested);
+        widen(o);
         if (o != r.place) r.loan = -1;
         r.place = std::move(o);
         r.exclusive = r.exclusive && !constResult;
