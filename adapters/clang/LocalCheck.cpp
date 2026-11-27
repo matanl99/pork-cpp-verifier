@@ -2044,7 +2044,8 @@ class Checker {
       // initierare i konstruktorn (`std::span<const char> v{t};` lånar ett
       // annat fält: en kopia lånar originalet, STN-92).
       if (auto r = expr(d->getExpr())) return r;
-      if (usesThis(d->getExpr())) return "initializer of field '" + d->getField()->getNameAsString() + "' uses *this";
+      if (usesThisExceptInitialized(d->getExpr(), *cast<CXXRecordDecl>(d->getField()->getParent()), earlierFields(*d->getField())))  // STN-104
+        return "initializer of field '" + d->getField()->getNameAsString() + "' uses *this";
       return std::nullopt;
     }
     // Temporärer av värdetyp: destruktorn är trivial, implicit (medlemsvis)
@@ -2195,6 +2196,17 @@ class Checker {
     return false;
   }
 
+  // STN-104: fälten i samma klass som deklareras före f, och därmed
+  // initieras före f ([class.base.init]: i deklarationsordning).
+  static std::set<const FieldDecl*> earlierFields(const FieldDecl& f) {
+    std::set<const FieldDecl*> out;
+    for (const FieldDecl* g : f.getParent()->fields()) {
+      if (g == &f) break;
+      out.insert(g);
+    }
+    return out;
+  }
+
   // STN-66 (c): som usesThis, men läsning av ett aritmetiskt fält eller
   // enumfält i klassen `rd` som redan är initierat (`initialized`), via
   // implicit this (`y(x + 1)`), räknas inte: det är en kopia av ett värde.
@@ -2243,7 +2255,8 @@ class Checker {
         } else if (auto r = expr(init)) {
           return r;
         }
-        if (usesThis(init)) return "initializer of " + what + " uses *this";
+        if (usesThisExceptInitialized(init, rd, earlierFields(*o.field)))  // STN-104
+          return "initializer of " + what + " uses *this";
         continue;
       }
       // STN-75: ett arrayfält utan initierare initieras element för element,

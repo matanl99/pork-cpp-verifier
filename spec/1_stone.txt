@@ -143,6 +143,14 @@ and bases (STN-67), and (d) holds for it as for a user-provided one: a base
 whose fields have no initialiser is rejected (`struct D : B { int z = 0; };
 D d;`). Silver: SLV-39.
 
+STN-104  Default member initializers that read earlier fields
+A default member initializer may read an arithmetic or enum field of the same
+class that is declared before it, through implicit `this` (`int b = a + 1;`),
+as STN-66 (c) permits for constructor initializers: fields are initialised in
+declaration order, and every field gets a value (STN-66). A later field, a
+loan or reference into the object (STN-92) and any other use of `*this` stay
+rejected.
+
 STN-72  Copy and move functions
 A user-provided copy constructor, move constructor, copy assignment or move
 assignment of a value type shall be analysed like any other member function

@@ -151,13 +151,14 @@ struct BindsField {
 };
 
 // (c) En implicit konstruktor eller aggregatinitiering: standardinitieraren
-// granskas där objektet skapas, och `x` är inte det objektets fält där.
+// granskas där objektet skapas; ett tidigare aritmetiskt fält får läsas där
+// också (STN-104, korpus 152).
 struct ImplicitReadsEarlier {
   int x = 1;
   int y = x + 1;
 };
-// rules: STN-66
-// expect: not-stone: initializer of field 'y' uses *this
+// rules: STN-66, STN-104
+// expect: stone
 int implicit_reads_earlier() {
   ImplicitReadsEarlier p;
   return p.y;
