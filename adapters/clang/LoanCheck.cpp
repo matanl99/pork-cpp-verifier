@@ -45,6 +45,7 @@
 
 #include <map>
 #include <set>
+#include <tuple>
 #include <string>
 #include <vector>
 
@@ -1349,7 +1350,31 @@ class LoanChecker {
     return base;
   }
 
+  // Samma anrop frågas många gånger inom en fråga: i `out << a << b << c` är
+  // objektet i varje led nästa anrop, och varje led läser sin operand på flera
+  // sätt (platser, lån som hålls, värden). Utan minne blir det exponentiellt i
+  // kedjans längd. Inom en fråga ändras varken tillståndet eller lånen (bara
+  // fail()), så svaret för (anrop, tillstånd) är detsamma; minnet töms när en
+  // ny fråga börjar.
   std::vector<PlaceRef> callResult(const CallExpr* c, const State& s) {
+    if (callDepth_ == 0) callMemo_.clear();
+    auto key = std::pair(c, &s);
+    if (auto it = callMemo_.find(key); it != callMemo_.end()) return it->second;
+    ++callDepth_;
+    std::vector<PlaceRef> out = callResultUncached(c, s);
+    --callDepth_;
+    // Samma ställe kan nås genom flera operander (objektet och ett argument
+    // som pekar in i det): en gång räcker, annars växer svaret i varje led.
+    std::set<std::tuple<Place, bool, int>> seen;
+    std::vector<PlaceRef> unique;
+    for (const PlaceRef& r : out)
+      if (seen.emplace(r.place, r.exclusive, r.loan).second) unique.push_back(r);
+    out = std::move(unique);
+    callMemo_.emplace(key, out);
+    return out;
+  }
+
+  std::vector<PlaceRef> callResultUncached(const CallExpr* c, const State& s) {
     const FunctionDecl* fd = c->getDirectCallee();
     const LoanRule rule = libraryRuleImpl(ctx_.lib, fd);
     Effect effect = rule.effect;
@@ -3093,6 +3118,8 @@ class LoanChecker {
   const VarDecl* consumed_ = nullptr;  // under ett `consumes`-anrop
   Types types_;
   std::vector<Loan> loans_;
+  unsigned callDepth_ = 0;  // callResult
+  std::map<std::pair<const CallExpr*, const State*>, std::vector<PlaceRef>> callMemo_;
   std::map<std::pair<Place, bool>, int> loanIds_;
   bool checking_ = false;
   Reason error_;
