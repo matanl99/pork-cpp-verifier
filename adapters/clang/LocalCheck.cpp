@@ -2936,7 +2936,11 @@ class Checker {
     // v[i].f: vilket element är okänt, så varje väg i roten överlappar.
     if (!moved.open && !q->overlaps(moved)) return std::nullopt;
     bool whole = !q->open && (moved.open ? q->fields.empty() : q->fields.size() <= moved.fields.size());
-    if (whole && resetCall(top)) {  // STN-101: `p.namn.clear()`
+    if (const CXXMemberCallExpr* reset = whole ? resetCall(top) : nullptr) {  // STN-101: clear(), assign(...)
+      std::map<const DeclRefExpr*, bool> inner;
+      bool ignored = false;
+      for (const Expr* a : reset->arguments())
+        if (auto r = usesAfterMove(a, moved, own, inner, ignored)) return r;
       kill = true;
       return std::nullopt;
     }
@@ -2950,16 +2954,16 @@ class Checker {
     return "'" + q->text + "' is used after " + what;
   }
 
-  // STN-101: är e objektet i ett anrop utan argument som std.txt märker `resets`?
-  bool resetCall(const Expr* e) const {
+  // STN-101: är e objektet i ett anrop som std.txt märker `resets`? Då anropet.
+  const CXXMemberCallExpr* resetCall(const Expr* e) const {
     auto& ctx = const_cast<ASTContext&>(types_.context());
     auto parents = ctx.getParents(*e);
     const auto* me = parents.size() == 1 ? parents[0].get<MemberExpr>() : nullptr;
-    if (me == nullptr || stripNoOp(me->getBase()) != e) return false;
+    if (me == nullptr || stripNoOp(me->getBase()) != e) return nullptr;
     auto up = ctx.getParents(*me);
     const auto* mc = up.size() == 1 ? up[0].get<CXXMemberCallExpr>() : nullptr;
     const CXXMethodDecl* md = mc ? mc->getMethodDecl() : nullptr;
-    return md != nullptr && mc->getNumArgs() == 0 && types_.libraryResets(*md);
+    return md != nullptr && types_.libraryResets(*md) ? mc : nullptr;
   }
 
   // Är e målet för en hel tilldelning (`e = x`: inbyggd, eller operator= som

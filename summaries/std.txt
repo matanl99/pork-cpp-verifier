@@ -114,6 +114,10 @@ owner pop_back pop_front : default keepsElements
 # [string.modifiers]), så ett flyttat objekt har ett bestämt värde igen
 # ([lib.types.movedfrom]: giltigt men ospecificerat).
 owner clear : default keepsElements resets
+# [string.assign], [sequence.reqmts] a.assign(i, j), a.assign(n, t),
+# a.assign(il): ersätter hela innehållet. Förvillkoren (i, j och t pekar inte
+# in i a) gäller argumenten, som granskas som ett högerled (STN-101).
+owner assign : default resets
 owner reserve shrink_to_fit : default keepsElements keepsValues
 
 # --- Fria funktioner (även std::ranges-algoritmer) -------------------------

@@ -635,10 +635,12 @@ holds the moved one, the moved path itself and a local reference into the
 root stay rejected (STN-57, STN-96).
 
 STN-101  Reset after a move
-A call without arguments that summaries/std.txt marks `resets` (`clear`:
-no precondition, `a.empty()` afterwards) on the moved path, or on a path that
-holds it, ends the move like a whole assignment (STN-96); later uses are
-permitted. Any other call on the moved path counts as a use.
+A call that summaries/std.txt marks `resets` (`clear`: no precondition,
+`a.empty()` afterwards; `assign`: the arguments' contents) on the moved path,
+or on a path that holds it, ends the move like a whole assignment (STN-96);
+its arguments are checked like the right-hand side of one, so an argument
+that reaches the moved path is a use. Later uses are permitted. Any other
+call on the moved path counts as a use.
 
 STN-102  Destructors that see a moved field
 Where x in `std::move(x)` is a field, whether the root is used afterwards or

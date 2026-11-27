@@ -7,7 +7,9 @@
 //
 // STN-101: ett anrop som std.txt märker `resets` (clear: [sequence.reqmts],
 // [associative.reqmts.general], [string.modifiers] a.clear(), eftervillkor
-// a.empty()) ger den flyttade vägen ett bestämt värde, som en hel tilldelning.
+// a.empty(); assign: [string.assign], [sequence.reqmts]) ger den flyttade
+// vägen ett bestämt värde, som en hel tilldelning. Argumenten granskas som ett
+// högerled: når de den flyttade vägen är det en användning.
 #include <string>
 #include <utility>
 #include <vector>
@@ -93,10 +95,56 @@ int cleared_in_branch(bool c) {
   return int(n.size() + p.namn.size());
 }
 
+// rules: STN-96, STN-101
+// expect: stone: assuming
+int assigned_after_move() {
+  Person p{"Anna", "Lund", 30};
+  std::string n = std::move(p.namn);
+  p.namn.assign("Bo");
+  return int(n.size() + p.namn.size());
+}
+
+// rules: STN-96, STN-101
+// expect: stone: assuming
+int assigned_from_sibling() {
+  Person p{"Anna", "Lund", 30};
+  std::string n = std::move(p.namn);
+  p.namn.assign(p.stad);
+  return int(n.size() + p.namn.size());
+}
+
+// rules: STN-96, STN-101
+// expect: not-stone: 'p.namn' is used after std::move(p.namn)
+int assigned_from_moved() {
+  Person p{"Anna", "Lund", 30};
+  std::string n = std::move(p.namn);
+  p.namn.assign(p.namn);
+  return int(n.size() + p.namn.size());
+}
+
+// rules: STN-57, STN-101
+// expect: stone: assuming
+int vector_assigned(std::vector<int> v) {
+  std::vector<int> w = std::move(v);
+  v.assign(3, 7);
+  return int(v.size() + w.size());
+}
+
+// rules: STN-57, STN-101
+// expect: not-stone: 'v' is used after std::move(v)
+int vector_assigned_from_itself(std::vector<int> v) {
+  std::vector<int> w = std::move(v);
+  v.assign(v.begin(), v.end());
+  return int(v.size() + w.size());
+}
+
 #ifdef PORK_RUN
 #include <pork/run.hpp>
 PORK_RUN_CASES(
     {"sibling_in_same_expression", [] { return sibling_in_same_expression() == 38 ? 0 : 1; }},
     {"cleared_after_move", [] { return cleared_after_move() == 4 ? 0 : 1; }},
-    {"cleared_vector", [] { return cleared_vector({1, 2}) == 3 ? 0 : 1; }})
+    {"cleared_vector", [] { return cleared_vector({1, 2}) == 3 ? 0 : 1; }},
+    {"assigned_after_move", [] { return assigned_after_move() == 6 ? 0 : 1; }},
+    {"assigned_from_sibling", [] { return assigned_from_sibling() == 8 ? 0 : 1; }},
+    {"vector_assigned", [] { return vector_assigned({1, 2}) == 5 ? 0 : 1; }})
 #endif

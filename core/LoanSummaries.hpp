@@ -73,7 +73,8 @@ namespace pork {
 //                       ändarna, unordered-behållare vid rehash, STN-95)
 //             resets    objektet får ett bestämt värde oavsett det tidigare, och
 //                       anropet har inget förvillkor på det (clear: a.empty()
-//                       efteråt). Ett flyttat objekt får användas igen (STN-101).
+//                       efteråt; assign: argumentens innehåll). Ett flyttat
+//                       objekt får användas igen (STN-101).
 //             interval(i,j)  parameter i och j (räknat från 0, utan objektet)
 //                       är ett intervall [first, last): båda pekar in i
 //                       samma objekt och får överlappa. Andra iterator-
