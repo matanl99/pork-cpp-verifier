@@ -276,6 +276,12 @@ A call with a `T&` argument or a non-const object shall only appear as an
 expression statement, the whole right-hand side of an assignment, the whole
 initialiser, the whole return value, or the whole condition of an if.
 
+STN-97  Fields of a call result
+Where a call that modifies its arguments may appear (STN-21), a field of the
+temporary it returns may be read instead (`m.emplace(k, v).second`): the call
+runs once and only the read follows. Not through `->`, a copy of the field or
+any operator around it.
+
 STN-22  Names
 Names shall refer to parameters, locals, enum constants, constexpr
 variables (including static constexpr members), const variables with a
@@ -391,6 +397,12 @@ std::string_view that the trust file makes a value type); what the loop body may
 iteration lives is decided by the loan model (STN-62). Iteration over std::map and std::set shall use copies
 or const element references. Const reference structured bindings over
 std::map are permitted when they use std::get.
+
+STN-98  Range-for over a returned reference
+A range-for may also be over a call that returns `const T&` to one of those
+types. The call is not a temporary; whether what it refers to lives through the
+loop, also a temporary in the range initializer (until the end of the loop from
+C++23, [stmt.ranged]), is decided by the loan model (STN-62).
 
 STN-36  Rejected bindings  [rejects]
 The analysis shall reject a non-const local reference bound to `c ? a : b`,

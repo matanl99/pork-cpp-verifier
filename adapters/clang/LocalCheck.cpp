@@ -1254,6 +1254,15 @@ class Checker {
     return vd != nullptr && !vd->hasLocalStorage() && !staticVariable(*vd);
   }
 
+  // Ett anrop (inte en operator på en vy) vars resultat är en const T&.
+  static bool returnsConstRef(const Expr* e) {
+    const auto* call = dyn_cast<CallExpr>(e->IgnoreImplicit()->IgnoreParens());
+    const FunctionDecl* f = call ? call->getDirectCallee() : nullptr;
+    if (f == nullptr || !call->isLValue()) return false;
+    const auto* ref = f->getReturnType()->getAs<LValueReferenceType>();
+    return ref != nullptr && ref->getPointeeType().isConstQualified();
+  }
+
   Reason rangeFor(const CXXForRangeStmt& rf) {
     if (rf.getInit() != nullptr) return "range-for with an init statement";
     if (auto r = destroyed(rf.getLoopVariable()->getType())) return r;  // STN-68: varje varv
@@ -1279,7 +1288,10 @@ class Checker {
     std::optional<Path> container = pathOf(range);
     // En konstant tabell (statisk lagring, const) har ingen väg, men ändras aldrig.
     bool table = array && !container && constantTable(range);
-    if (!container && !table) return "range-for over a temporary (needs a variable or field)";
+    // STN-98: ett anrop som returnerar const T& är ingen temporär. Det lånade
+    // (och i C++23 temporärer i intervallet, P2718) håller lånemodellen levande.
+    bool returned = !container && !table && returnsConstRef(range);
+    if (!container && !table && !returned) return "range-for over a temporary (needs a variable or field)";
     if (auto r = expr(range)) return r;
     if (!span && !array)
       if (auto w = types_.whyNotValue(range->getType())) return "range-for over a non-value type" + *w;
@@ -2023,7 +2035,13 @@ class Checker {
       return castExpr(llvm::cast<CastExpr>(e), [&](const Expr* sub) { return expr(sub); });
 
     if (const auto* dr = dyn_cast<DeclRefExpr>(e)) return declRef(dr);
-    if (const auto* m = dyn_cast<MemberExpr>(e)) return member(m);
+    if (const auto* m = dyn_cast<MemberExpr>(e)) {
+      // STN-97: ett fält i temporären från det yttersta anropet
+      // (`m.emplace(k, v).second`) läses efter att anropet körts en gång.
+      if (effectHere && !m->isArrow() && isa<FieldDecl>(m->getMemberDecl()) && isTemporary(m->getBase()))
+        return pass(m->getBase());
+      return member(m);
+    }
     if (const auto* subscript = dyn_cast<ArraySubscriptExpr>(e))
       if (const Expr* base = ownedArrayBase(*subscript)) return all(expr(base), expr(subscript->getIdx()));
 

@@ -15,9 +15,9 @@ void insert_during_iteration(std::set<int>& keys) {
   for (const int& key : keys) keys.insert(key + 1);
 }
 
-// Paret är ett lånevärde; kvar: structured bindings utanför range-for.
-// rules: STN-20
-// expect: not-stone: side effect inside expression
+// Paret är ett lånevärde; fältet läses ur resultatet av det yttersta anropet.
+// rules: STN-20, STN-97
+// expect: stone: assuming
 // loans: ok
 bool inspect_insert_result(std::set<int>& keys, int key) {
   return keys.insert(key).second;

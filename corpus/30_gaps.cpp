@@ -43,23 +43,8 @@ const std::vector<int>& targets_or_none(const std::map<int, std::vector<int>>& i
   return it == index.end() ? none : it->second;
 }
 
-// Hjälp till 11: ett lån av argumentet (STN-18, const T& från const&-parameter).
-// rules: STN-18
-// expect: stone: assuming
-const std::vector<int>& first_targets(const std::map<int, std::vector<int>>& index, int key) {
-  return index.at(key);
-}
-
-// 11. Range-for över en const T& som en egen funktion returnerar (ett lån av
-// argumentet, inte en temporär).
-// rules: STN-35
-// expect: not-stone: range-for over a temporary
-// loans: ok
-int sum_targets(const std::map<int, std::vector<int>>& index, int key) {
-  int sum = 0;
-  for (int t : first_targets(index, key)) sum += t;
-  return sum;
-}
+// 11. (Stängd av STN-98: range-for över en const T& från ett anrop, nu i
+// corpus/147_call_results.cpp.)
 
 // 12. Vektor av pekare till const-element i en const&-parameter, som lever
 // kortare än parametern (en lista av lån).
@@ -72,11 +57,5 @@ int count_positive(const std::vector<Pass>& passes) {
   return static_cast<int>(positive.size());
 }
 
-// 13. Resultatet av map::emplace används direkt (.second): pair<iterator, bool>.
-// Paret är ett lånevärde; kvar: anropet ändrar sitt objekt inne i ett uttryck.
-// rules: STN-20
-// expect: not-stone: side effect inside expression
-// loans: ok
-bool first_contract(std::map<int, int>& owners, int method, int owner) {
-  return owners.emplace(method, owner).second;
-}
+// 13. (Stängd av STN-97: fält i resultatet av det yttersta anropet, nu i
+// corpus/147_call_results.cpp.)
