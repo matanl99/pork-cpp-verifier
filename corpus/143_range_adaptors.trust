@@ -1,0 +1,11 @@
+type std::vector
+std::vector::*
+type std::list
+std::list::*
+type std::allocator
+std::allocator::*
+type std::basic_string
+std::basic_string::*
+type std::ranges::filter_view
+type std::ranges::ref_view
+type std::ranges::reverse_view
