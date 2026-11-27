@@ -320,7 +320,8 @@ STN-23  Transitive Stone
 A function shall be Stone only if every function it calls is Stone or
 trusted (greatest fixpoint over the call graph, also across translation
 units). A call to a function without definition that is not trusted shall
-be rejected.
+be rejected, and so shall a call whose callee is not known from the call
+itself (through a pointer to member function, `(o.*pm)()`).
 
 STN-94  One definition per function  [rejects]
 A function defined in more than one translation unit (an inline function,

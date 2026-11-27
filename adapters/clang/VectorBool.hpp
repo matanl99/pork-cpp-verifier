@@ -67,7 +67,7 @@ inline const clang::Expr* bitRead(const clang::Expr* e) {
   if (const auto* c = dyn_cast<ImplicitCastExpr>(e); c != nullptr && c->getCastKind() == CK_UserDefinedConversion)
     e = c->getSubExpr()->IgnoreParens();
   const auto* mc = dyn_cast<CXXMemberCallExpr>(e);
-  if (mc == nullptr || !isa<CXXConversionDecl>(mc->getMethodDecl()) || !mc->getType()->isBooleanType())
+  if (mc == nullptr || !isa_and_nonnull<CXXConversionDecl>(mc->getMethodDecl()) || !mc->getType()->isBooleanType())
     return nullptr;
   return bitElement(mc->getImplicitObjectArgument());
 }

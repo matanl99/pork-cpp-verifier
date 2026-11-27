@@ -1976,6 +1976,10 @@ class Checker {
     };
 
     if (e == nullptr) return std::nullopt;
+    // Ett anrop genom en medlemspekare (`(o.*pm)()`) har ingen känd metod:
+    // vilken kod som körs syns inte (G1).
+    if (const auto* mc = dyn_cast<CXXMemberCallExpr>(e); mc != nullptr && mc->getMethodDecl() == nullptr)
+      return std::string("call through a pointer to member");
     if (lambdaArgs_.contains(e)) return std::nullopt;  // STN-79, se lambdaArguments
     if (const auto* dr = dyn_cast<DeclRefExpr>(e)) {
       if (const auto* vd = dyn_cast<VarDecl>(dr->getDecl()); vd != nullptr && lambdas_.contains(vd))
