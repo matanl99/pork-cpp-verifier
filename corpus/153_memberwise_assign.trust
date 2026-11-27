@@ -1,0 +1,10 @@
+type std::vector
+std::vector::*
+type std::allocator
+std::allocator::*
+type std::basic_string_view
+std::basic_string_view::*
+type std::span
+std::span::*
+type std::optional
+std::optional::*

@@ -1148,3 +1148,14 @@ loan-bearing object it may change (a non-const reference or pointer argument,
 the object of a non-const method): afterwards a local such object also
 borrows what the other operands reach, and a parameter or *this shall not
 receive a loan of anything that does not outlive the function.
+
+STN-105  Memberwise assignment of loan-bearing objects
+A call to an implicit or defaulted copy or move assignment operator does not
+write through the loans its operands hold (an exception to G3 in STN-62) when
+copying, moving, assigning and destroying the class runs no user code: it has
+no user-provided copy or move constructor, assignment operator or destructor,
+no virtual base, and each base and field is a scalar, a pointer, an array of
+such, a class of the same kind, or a std template whose type arguments are of
+the same kind (std::reference_wrapper excluded). The fields that hold loans
+get new values; what they point to is not changed. Loans stored by the
+assignment are checked as before.

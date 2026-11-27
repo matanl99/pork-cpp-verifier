@@ -1777,6 +1777,14 @@ class LoanChecker {
                        : stdOnly(element) || (elementsRunNoUserCode(element) && copiesElement(container, o.e->getType())))
             writesThrough = false;
         }
+        // En implicit eller defaulted operator= kopierar eller flyttar fält för
+        // fält: lånebärande fält (vyer, pekare) får nya värden, men inget skrivs
+        // genom det de pekar på, om ingen användarkod körs (S8).
+        if (md != nullptr && (md->isCopyAssignmentOperator() || md->isMoveAssignmentOperator()) &&
+            !md->isUserProvided()) {
+          std::set<const CXXRecordDecl*> seen;
+          if (memberwiseRunsNoUserCode(fd_.getASTContext().getCanonicalTagType(md->getParent()), seen)) writesThrough = false;
+        }
         std::vector<PlaceRef> excl;
         for (const PlaceRef& r : held)
           if (r.exclusive) excl.push_back(r);
@@ -2211,6 +2219,39 @@ class LoanChecker {
   // Kopiering, flytt och destruktion av typen kör ingen användarkod: en
   // std-typ av sådana (stdOnly), eller trivialt kopierbar med trivial
   // destruktor.
+  // Kör kopiering, flytt, tilldelning och destruktion av t bara kod som inte är
+  // användarens? Skalärer och pekare; std-mallar med sådana typargument
+  // (utom reference_wrapper); egna klasser utan egna specialmedlemmar vars
+  // baser och fält uppfyller samma sak. En rekursiv typ räknas koinduktivt.
+  static bool memberwiseRunsNoUserCode(QualType t, std::set<const CXXRecordDecl*>& seen) {
+    if (t.isNull()) return false;
+    t = t.getCanonicalType();
+    if (t->isReferenceType()) return false;
+    while (const auto* a = dyn_cast<ArrayType>(t.getTypePtr())) t = a->getElementType().getCanonicalType();
+    if (t->isBuiltinType() || t->isEnumeralType() || t->isPointerType()) return true;
+    const CXXRecordDecl* rd = t->getAsCXXRecordDecl();
+    if (rd == nullptr || !rd->hasDefinition()) return false;
+    rd = rd->getDefinition();
+    if (!seen.insert(rd).second) return true;
+    if (const auto* spec = dyn_cast<ClassTemplateSpecializationDecl>(rd); spec != nullptr && inStd(*spec)) {
+      if (spec->getSpecializedTemplate()->getQualifiedNameAsString() == "std::reference_wrapper") return false;
+      for (const TemplateArgument& a : spec->getTemplateArgs().asArray())
+        if (a.getKind() == TemplateArgument::Type && !memberwiseRunsNoUserCode(a.getAsType(), seen)) return false;
+      return true;
+    }
+    if (inStd(*rd)) return false;  // annan std-klass: okänt
+    for (const CXXMethodDecl* m : rd->methods())
+      if (m->isUserProvided() && (isa<CXXDestructorDecl>(m) || m->isCopyAssignmentOperator() ||
+                                  m->isMoveAssignmentOperator() ||
+                                  (isa<CXXConstructorDecl>(m) && (cast<CXXConstructorDecl>(m)->isCopyOrMoveConstructor()))))
+        return false;
+    for (const CXXBaseSpecifier& b : rd->bases())
+      if (b.isVirtual() || !memberwiseRunsNoUserCode(b.getType(), seen)) return false;
+    for (const FieldDecl* f : rd->fields())
+      if (!memberwiseRunsNoUserCode(f->getType(), seen)) return false;
+    return true;
+  }
+
   bool elementsRunNoUserCode(QualType t) const {
     if (t.isNull()) return false;
     if (stdOnly(t)) return true;
