@@ -508,7 +508,7 @@ class Builder {
     }
     if (!g_.unsupported.empty()) return std::nullopt;
     if (!hidden.empty() && !copies.empty()) {
-      block_->stmts.push_back({FlowStmt::Kind::assign, hidden, std::move(copies), {}});
+      block_->stmts.push_back({FlowStmt::Kind::assign, hidden, std::move(copies), {}, {}});
       reads.push_back(FlowValue::read(hidden));
       // mutable: varje anrop kan ändra kopiorna, nästa anrop ser det.
       if (le.isMutable()) writes.push_back(hidden);
@@ -756,7 +756,7 @@ class Builder {
         return;
       }
       FlowValues v = eval(i->getInit());
-      block_->stmts.push_back({FlowStmt::Kind::assign, "this." + fieldId(*i->getMember()), std::move(v), {}});
+      block_->stmts.push_back({FlowStmt::Kind::assign, "this." + fieldId(*i->getMember()), std::move(v), {}, {}});
       return;
     }
     if (auto d = e.getAs<CFGAutomaticObjDtor>()) {
@@ -787,7 +787,7 @@ class Builder {
         return;
     if (const auto* r = dyn_cast<ReturnStmt>(s)) {
       FlowValues v = eval(r->getRetValue());
-      block_->stmts.push_back({FlowStmt::Kind::ret, {}, std::move(v), {}});
+      block_->stmts.push_back({FlowStmt::Kind::ret, {}, std::move(v), {}, {}});
       return;
     }
     if (const auto* ds = dyn_cast<DeclStmt>(s)) {
@@ -895,7 +895,7 @@ class Builder {
           return;
         }
         FlowValues v = eval(init);
-        block_->stmts.push_back({FlowStmt::Kind::assign, localName(vd), std::move(v), {}});
+        block_->stmts.push_back({FlowStmt::Kind::assign, localName(vd), std::move(v), {}, {}});
         return;
       }
       if (auto p = holdingElement(vd)) {
@@ -910,7 +910,7 @@ class Builder {
           // dold lokal håller värdet, så att en senare ändring av i inte räknas.
           if (FlowValues ix = indexOf(init); !ix.empty()) {
             std::string hidden = localName(vd) + ".index";
-            block_->stmts.push_back({FlowStmt::Kind::assign, hidden, std::move(ix), {}});
+            block_->stmts.push_back({FlowStmt::Kind::assign, hidden, std::move(ix), {}, {}});
             aliasIndex_[vd] = {FlowValue::read(hidden)};
           } else {
             aliasIndex_.erase(vd);

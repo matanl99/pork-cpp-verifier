@@ -164,8 +164,7 @@ class Analysis {
   static std::string stmtMarker(std::size_t b, std::size_t i) {
     return "\xc2\xa7" + std::to_string(b) + "." + std::to_string(i);
   }
-  static std::string condMarker(std::size_t b) { return "\xc2\xa7c" + std::to_string(b); }
-  static bool isMarker(const std::string& d) { return d.starts_with("\xc2\xa7"); }
+  static std::string condMarker(std::size_t b) { return "\xc2\xa7" "c" + std::to_string(b); }
 
   // Satser som når en utdata: returvärdet, utdataparametrarna vid utgången,
   // anrop av kod med verkan utanför (sink_), villkoren för ett kast.
