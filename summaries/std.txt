@@ -108,7 +108,12 @@ owner std::unique_ptr::swap : default swaps
 # elementens värden ([sequence.reqmts]: sekvensen är densamma med de nya
 # elementen); de flyttas, och det en unique_ptr äger lever.
 owner emplace_back emplace_front : default insertsArguments keepsValues
-owner pop_back pop_front clear : default keepsElements
+owner pop_back pop_front : default keepsElements
+# resets (STN-101): clear har inget förvillkor och a.empty() gäller efteråt
+# ([sequence.reqmts], [associative.reqmts.general], [unord.req.general],
+# [string.modifiers]), så ett flyttat objekt har ett bestämt värde igen
+# ([lib.types.movedfrom]: giltigt men ospecificerat).
+owner clear : default keepsElements resets
 owner reserve shrink_to_fit : default keepsElements keepsValues
 
 # --- Fria funktioner (även std::ranges-algoritmer) -------------------------

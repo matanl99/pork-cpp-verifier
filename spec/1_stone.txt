@@ -629,6 +629,19 @@ loop` or `std::move(x) out of C, which has a user-provided destructor`.
 Silver: a copy of x (STN-57); since x is not read before it is assigned, the
 copy does not change the meaning.
 
+STN-100  Siblings of a moved path
+When the moved path has only fields (`std::move(p.namn)`), another
+occurrence of the root in the same full-expression is permitted if its path
+does not overlap the moved one (`p.stad`). The whole object, a path that
+holds the moved one, the moved path itself and a local reference into the
+root stay rejected (STN-57, STN-96).
+
+STN-101  Reset after a move
+A call without arguments that summaries/std.txt marks `resets` (`clear`:
+no precondition, `a.empty()` afterwards) on the moved path, or on a path that
+holds it, ends the move like a whole assignment (STN-96); later uses are
+permitted. Any other call on the moved path counts as a use.
+
 STN-58  Local iterators
 A local iterator is a loan value (STN-39); it may be initialised by any
 expression that passes the rules. Invalidation, comparison with an iterator

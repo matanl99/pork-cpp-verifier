@@ -417,6 +417,13 @@ class TypeRules {
     return !rule.origin.empty() && (rule.effect == LoanEffect::reads || rule.effect == LoanEffect::access);
   }
 
+  // STN-101: std.txt säger att anropet ger objektet ett bestämt värde (clear).
+  bool libraryResets(const FunctionDecl& fd) const {
+    if (summaries_ == nullptr) return false;
+    LoanRule rule = libraryRule(*summaries_, &fd);
+    return !rule.origin.empty() && rule.resets;
+  }
+
   bool borrowsOnlyFirst(const FunctionDecl& fd) const {
     if (summaries_ == nullptr) return false;
     LoanEffect e = libraryRule(*summaries_, &fd).effect;
@@ -2679,7 +2686,9 @@ class Checker {
     if (root == nullptr || (root->getType()->isReferenceType() && !moveSource) || !root->hasLocalStorage())
       return std::string("std::move of something other than a local variable or value parameter");
     noteWrite(*p);
-    if (auto r = sameExpression(call, *p, moveSource)) return r;
+    // STN-100: för en väg (bara fält) räcker att inget överlappande förekommer.
+    bool pathMove = !p->fields.empty() && !p->open;
+    if (auto r = sameExpression(call, *p, moveSource || pathMove)) return r;
     if (moveSource) {
       if (auto r = movedFromSource(call, arg, *p, *parm)) return r;
       return expr(arg);
@@ -2855,6 +2864,10 @@ class Checker {
     // v[i].f: vilket element är okänt, så varje väg i roten överlappar.
     if (!moved.open && !q->overlaps(moved)) return std::nullopt;
     bool whole = !q->open && (moved.open ? q->fields.empty() : q->fields.size() <= moved.fields.size());
+    if (whole && resetCall(top)) {  // STN-101: `p.namn.clear()`
+      kill = true;
+      return std::nullopt;
+    }
     if (const Expr* rhs = whole ? assignedFrom(top) : nullptr) {
       std::map<const DeclRefExpr*, bool> inner;
       bool ignored = false;
@@ -2863,6 +2876,18 @@ class Checker {
       return std::nullopt;
     }
     return "'" + q->text + "' is used after " + what;
+  }
+
+  // STN-101: är e objektet i ett anrop utan argument som std.txt märker `resets`?
+  bool resetCall(const Expr* e) const {
+    auto& ctx = const_cast<ASTContext&>(types_.context());
+    auto parents = ctx.getParents(*e);
+    const auto* me = parents.size() == 1 ? parents[0].get<MemberExpr>() : nullptr;
+    if (me == nullptr || stripNoOp(me->getBase()) != e) return false;
+    auto up = ctx.getParents(*me);
+    const auto* mc = up.size() == 1 ? up[0].get<CXXMemberCallExpr>() : nullptr;
+    const CXXMethodDecl* md = mc ? mc->getMethodDecl() : nullptr;
+    return md != nullptr && mc->getNumArgs() == 0 && types_.libraryResets(*md);
   }
 
   // Är e målet för en hel tilldelning (`e = x`: inbyggd, eller operator= som
@@ -3009,11 +3034,28 @@ class Checker {
       if (m == nullptr) continue;
       std::optional<Path> p = pathOf(m);
       if (!p || p->root == nullptr) continue;
+      bool pathMove = !p->fields.empty() && !p->open;  // STN-100
       for (const Expr* other : all)
-        if (other != a && mentions(other, p->root))
+        if (other != a && (pathMove ? mentionsOverlapping(other, *p) : mentions(other, p->root)))
           return "'" + cast<NamedDecl>(p->root)->getNameAsString() + "' is used in the same call as std::move(" + p->text + ")";
     }
     return std::nullopt;
+  }
+
+  // STN-100: förekommer en väg som överlappar moved (eller en referens in i roten)?
+  bool mentionsOverlapping(const Stmt* s, const Path& moved) const {
+    if (s == nullptr) return false;
+    if (const auto* dr = dyn_cast<DeclRefExpr>(s)) {
+      if (dr->getDecl() == moved.root) {
+        std::optional<Path> q = pathOf(largestPath(dr));
+        return !q || q->overlaps(moved);
+      }
+      if (const auto* vd = dyn_cast<VarDecl>(dr->getDecl()))
+        if (auto it = refs_.find(vd); it != refs_.end() && it->second.root == moved.root) return true;
+    }
+    for (const Stmt* child : s->children())
+      if (mentionsOverlapping(child, moved)) return true;
+    return false;
   }
 
   bool mentions(const Stmt* s, const Decl* root) const {

@@ -71,6 +71,9 @@ namespace pork {
 //                       värden in i objektet blir ogiltiga; referenser och pekare
 //                       till element (och det de äger) förblir giltiga (deque i
 //                       ändarna, unordered-behållare vid rehash, STN-95)
+//             resets    objektet får ett bestämt värde oavsett det tidigare, och
+//                       anropet har inget förvillkor på det (clear: a.empty()
+//                       efteråt). Ett flyttat objekt får användas igen (STN-101).
 //             interval(i,j)  parameter i och j (räknat från 0, utan objektet)
 //                       är ett intervall [first, last): båda pekar in i
 //                       samma objekt och får överlappa. Andra iterator-
@@ -106,6 +109,7 @@ struct LoanRule {
   bool swaps = false;
   bool keepsValues = false;  // befintliga element behåller sina värden (kan flyttas till ny lagring)
   bool invalidatesIterators = false;  // med insert: bara referenser och pekare till element överlever (STN-95)
+  bool resets = false;  // objektet får ett bestämt värde utan förvillkor (clear, STN-101)
 };
 
 class LoanSummaries {

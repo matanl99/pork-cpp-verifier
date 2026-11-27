@@ -95,9 +95,11 @@ bool in_condition(std::vector<int> x) {
   return false;
 }
 
-// Ett annat fält i samma lokala variabel: roten räknas (STN-57).
-// rules: STN-57
-// expect: not-stone: 'q' is used in the same expression as std::move(q.a)
+// Ett annat fält i samma lokala variabel: q.n överlappar inte q.a (STN-100).
+// Ingen körning: Pair saknar kopierings- och flyttkonstruktor (se
+// sibling_in_same_expression i 149_move_reset.cpp för samma form).
+// rules: STN-57, STN-100
+// expect: stone: assuming
 int other_field_of_local(Pair q) { return q.n + count(std::move(q.a)); }
 
 // Genom en lokal referens till roten.
