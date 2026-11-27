@@ -192,6 +192,12 @@ trusted, not std) may be returned in turn, as a path into the object it was
 called on (`return at_index(i);`). Bound to a local reference it is still a
 loan of the object (STN-62).
 
+STN-103  References through a local iterator
+A returned `const T&` (STN-10) may also be a path through a local iterator
+or other loan value that is not a pointer (`it->second`, `*it`). Whether
+what it points into outlives the call, and is not changed before the
+return, is decided by the loan model (STN-62).
+
 STN-11  Pointer return
 Where the return type is `const T*` to a value type, every return shall be an
 expression that passes the expression rules (STN-18): `nullptr`, a pointer

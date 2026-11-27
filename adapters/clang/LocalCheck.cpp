@@ -1544,6 +1544,12 @@ class Checker {
       return std::nullopt;
     std::optional<Path> p = pathOf(e);
     if (!p) return std::string("returns a reference that is not a field of *this or a const& parameter");
+    // STN-103: genom en lokal iterator (`it->second`, `*it`): vad den pekar in
+    // i, och om det lever efter anropet, avgör lånemodellen.
+    if (const auto* vd = dyn_cast_or_null<VarDecl>(p->root);
+        vd != nullptr && !isa<ParmVarDecl>(vd) && vd->hasLocalStorage() && !vd->getType()->isReferenceType() &&
+        types_.isLoanValue(vd->getType()) && !vd->getType()->isPointerType())
+      return std::nullopt;
     return outlivesCall(*p, "a reference");
   }
 
