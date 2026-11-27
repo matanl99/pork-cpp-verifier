@@ -62,6 +62,29 @@ utan flödesdata i std.txt är konservativ: varje utdata beror på alla indata
 och på sitt ingångsvärde, och ingen skrivning är garanterad. Bara data i
 std.txt får göra det snävare, aldrig en gissning.
 
+### Satser utan verkan (BRZ-7)
+
+`PORK_DEPENDS` är en övre gräns: en utdata får bara bero på det som står där. En funktion
+som beror på för lite uppfyller den alltid, till exempel `if (valid);` (den tomma satsen
+är hela if-kroppen) eller `static_cast<void>(round_is_open(answer));` (kontrollen kastas).
+Därför listar flödet också satser och villkor vars värde inte når någon utdata, som SPARK:s
+"ineffective statement":
+
+```
+count_vote: stone
+  flow: return <- count
+  flow: no effect: the condition at line 5
+```
+
+En funktion med krav är då inte bronze. Att nå en utdata betyder att värdet, direkt eller
+genom senare satser, villkor och anrop, når returvärdet, en utdataparameter vid retur eller
+där funktionen kastar, eller ett anrop av okänd eller betrodd kod (eller av en funktion med
+sådan verkan, eller som kan kasta). Det räknas med en markör per sats och villkor i samma
+analys som beroendena (`findNoEffect` i `core/Flow.cpp`), efter fixpunkten. Rapporteras:
+initiering av en lokal (inte en range-for-variabel), tilldelning, ett anrop som är hela
+satsen och villkoret i if, while, for, do och switch; grenarna i `a && b` och `c ? x : y` är
+delar av ett värde. Kod som aldrig nås rapporteras inte.
+
 ## Ordning
 
 1. **`--flow`: utskrift av det härledda flödet, utan dom.** Inga nivåer ändras.

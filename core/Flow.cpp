@@ -41,8 +41,12 @@ struct State {
 
 class Analysis {
  public:
-  Analysis(const FlowGraph& g, const std::map<std::string, FlowSummary>& callees)
-      : g_(g), callees_(callees), inputs_(g.params.begin(), g.params.end()) {}
+  Analysis(const FlowGraph& g, const std::map<std::string, FlowSummary>& callees, bool markers = false)
+      : g_(g), callees_(callees), inputs_(g.params.begin(), g.params.end()), markers_(markers) {}
+
+  // BRZ-7: markörerna ("§b.i" för sats i i block b, "§cb" för villkoret i b)
+  // som inte når någon utdata, som anteckningar. Körs med markers = true.
+  std::vector<std::string> noEffect() const { return noEffect_; }
 
   FlowSummary run() {
     const std::size_t n = g_.blocks.size();
@@ -73,7 +77,10 @@ class Analysis {
       // Styrberoenden: villkoren som en block beror på, transitivt.
       std::vector<Deps> nextCond(n), nextCtl(n);
       for (unsigned b = 0; b < n; ++b)
-        if (out[b].reached) nextCond[b] = resolve(out[b], g_.blocks[b].cond);
+        if (out[b].reached) {
+          nextCond[b] = resolve(out[b], g_.blocks[b].cond);
+          if (markers_ && g_.blocks[b].succs.size() > 1) nextCond[b].insert(condMarker(b));
+        }
       for (bool changed = true; changed;) {
         changed = false;
         for (unsigned b = 0; b < n; ++b)
@@ -84,7 +91,26 @@ class Analysis {
             changed |= nextCtl[b].size() != before;
           }
       }
-      if (nextCtl == ctl) return summary(in[g_.exit], ret);
+      if (nextCtl == ctl) {
+        FlowSummary s = summary(in[g_.exit], ret);
+        // Ett kast: ett block som nås men inte leder någonstans (inte utgången).
+        for (unsigned b = 0; b < n; ++b)
+          if (out[b].reached && b != g_.exit && g_.blocks[b].succs.empty()) {
+            s.external = true;
+            sink_.insert(ctl[b].begin(), ctl[b].end());
+            // En anropare som fångar undantaget ser utdata som de är vid kastet.
+            for (std::size_t i = 0; i < g_.params.size(); ++i)
+              if (i < g_.outputs.size() && g_.outputs[i])
+                for (const std::string& p : out[b].written)
+                  if (rootOf(p) == g_.params[i]) {
+                    Deps d = read(out[b], p);
+                    sink_.insert(d.begin(), d.end());
+                  }
+          }
+        if (sinkExternal_) s.external = true;
+        if (markers_) collectNoEffect(out, s, ret);
+        return s;
+      }
       ctl = std::move(nextCtl);
       condDeps = std::move(nextCond);
     }
@@ -135,13 +161,43 @@ class Analysis {
     if (sure) s.always.insert(p);
   }
 
-  void transfer(State& s, const FlowBlock& b, const Deps& ctl, Deps& ret) const {
+  static std::string stmtMarker(std::size_t b, std::size_t i) {
+    return "\xc2\xa7" + std::to_string(b) + "." + std::to_string(i);
+  }
+  static std::string condMarker(std::size_t b) { return "\xc2\xa7c" + std::to_string(b); }
+  static bool isMarker(const std::string& d) { return d.starts_with("\xc2\xa7"); }
+
+  // Satser som når en utdata: returvärdet, utdataparametrarna vid utgången,
+  // anrop av kod med verkan utanför (sink_), villkoren för ett kast.
+  void collectNoEffect(const std::vector<State>& out, const FlowSummary& s, const Deps& ret) {
+    Deps effective = sink_;
+    effective.insert(ret.begin(), ret.end());
+    for (const auto& [o, d] : s.deps) effective.insert(d.begin(), d.end());
+    for (unsigned b = 0; b < g_.blocks.size(); ++b) {
+      if (!out[b].reached) continue;
+      const FlowBlock& blk = g_.blocks[b];
+      for (std::size_t i = 0; i < blk.stmts.size(); ++i)
+        if (!blk.stmts[i].note.empty() && blk.stmts[i].kind != FlowStmt::Kind::ret &&
+            !effective.contains(stmtMarker(b, i)))
+          noEffect_.push_back(blk.stmts[i].note);
+      if (!blk.condNote.empty() && blk.succs.size() > 1 && !effective.contains(condMarker(b)))
+        noEffect_.push_back(blk.condNote);
+    }
+  }
+
+  void transfer(State& s, const FlowBlock& b, const Deps& ctl0, Deps& ret) {
     if (!s.reached) return;
+    const std::size_t bi = static_cast<std::size_t>(&b - g_.blocks.data());
+    std::size_t index = 0;
+    Deps ctl = ctl0;
     auto with = [&](Deps d) {
       d.insert(ctl.begin(), ctl.end());
       return d;
     };
     for (const FlowStmt& st : b.stmts) {
+      ctl = ctl0;
+      if (markers_) ctl.insert(stmtMarker(bi, index));
+      ++index;
       switch (st.kind) {
         case FlowStmt::Kind::assign:
           write(s, st.target, with(resolve(s, st.values)), true, true);
@@ -165,7 +221,7 @@ class Analysis {
     }
   }
 
-  void call(State& s, const FlowCall& c, const Deps& ctl) const {
+  void call(State& s, const FlowCall& c, const Deps& ctl) {
     const std::string result = "#" + std::to_string(c.id);
     auto it = c.usr.empty() ? callees_.end() : callees_.find(c.usr);
     const FlowSummary* callee = it != callees_.end() && it->second.known ? &it->second : nullptr;
@@ -182,6 +238,19 @@ class Analysis {
       }
       return i < c.args.size() ? resolve(s, c.args[i]) : Deps{};
     };
+    // Kod med verkan utanför utdata (BRZ-7): det som når anropet har verkan.
+    if (callee == nullptr || callee->params.size() != c.args.size() || callee->external) {
+      sinkExternal_ = true;
+      sink_.insert(ctl.begin(), ctl.end());
+      for (std::size_t i = 0; i < c.args.size(); ++i) {
+        Deps d = argDeps(i, "");
+        sink_.insert(d.begin(), d.end());
+      }
+      for (const FlowValues& ix : c.refIndex) {
+        Deps x = resolve(s, ix);
+        sink_.insert(x.begin(), x.end());
+      }
+    }
     if (callee == nullptr || callee->params.size() != c.args.size()) {
       // Okänd kod: allt kan bero på allt, varje skrivbar referens kan skrivas.
       Deps all = ctl;
@@ -334,6 +403,10 @@ class Analysis {
   const std::map<std::string, FlowSummary>& callees_;
   std::set<std::string> inputs_;
   std::vector<std::set<unsigned>> cd_;
+  bool markers_ = false;
+  Deps sink_;                 // når kod med verkan utanför (anrop, kast)
+  bool sinkExternal_ = false;  // ett sådant anrop finns
+  std::vector<std::string> noEffect_;
 };
 
 }  // namespace
@@ -385,6 +458,16 @@ std::map<std::string, FlowSummary> computeFlows(const std::map<std::string, Flow
       f.why = "flow did not converge";
     }
   return s;
+}
+
+void findNoEffect(const std::map<std::string, FlowGraph>& graphs, std::map<std::string, FlowSummary>& flows) {
+  for (const auto& [usr, g] : graphs) {
+    auto it = flows.find(usr);
+    if (it == flows.end() || !it->second.known || !g.unsupported.empty()) continue;
+    Analysis a(g, flows, true);
+    a.run();
+    it->second.noEffect = a.noEffect();
+  }
 }
 
 namespace {
@@ -463,6 +546,7 @@ std::vector<std::string> flowLines(const FlowSummary& s) {
     if (o == "return") continue;
     out.push_back(line(o, d) + (s.always.contains(o) ? " (always written)" : " (maybe written)"));
   }
+  for (const std::string& n : s.noEffect) out.push_back("no effect: " + n);
   return out;
 }
 

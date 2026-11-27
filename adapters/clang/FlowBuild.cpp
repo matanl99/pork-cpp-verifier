@@ -91,7 +91,13 @@ class Builder {
         element(e, cond);
         if (!g_.unsupported.empty()) return g_;
       }
-      if (const auto* c = dyn_cast_or_null<Expr>(cond)) block_->cond = eval(c);
+      if (const auto* c = dyn_cast_or_null<Expr>(cond)) {
+        block_->cond = eval(c);
+        // Bara satsernas villkor: i `a && b` och `c ? x : y` är grenen en del av
+        // ett värde, och det värdet har eller saknar verkan som helhet.
+        if (isa_and_nonnull<IfStmt, WhileStmt, ForStmt, DoStmt, SwitchStmt, CXXForRangeStmt>(b->getTerminatorStmt()))
+          block_->condNote = "the condition at " + lineOf(c);
+      }
       // Ett kast (STN-83) är ingen normal retur: blocket leder ingenstans.
       if (!throws_)
         for (const CFGBlock::AdjacentBlock& s : b->succs())
@@ -647,7 +653,8 @@ class Builder {
       }
     }
     unsigned id = fc.id;
-    block_->stmts.push_back({FlowStmt::Kind::call, {}, {}, std::move(fc)});
+    std::string note = isExpressionStatement(c) ? "the call of '" + fc.name + "' at " + lineOf(c) : "";
+    block_->stmts.push_back({FlowStmt::Kind::call, {}, {}, std::move(fc), std::move(note)});
     return {FlowValue::result(id)};
   }
 
@@ -660,7 +667,8 @@ class Builder {
     }
     append(values, indexOf(lhs));
     if (readOld) values.push_back(FlowValue::read(*p));
-    block_->stmts.push_back({weak ? FlowStmt::Kind::weak : FlowStmt::Kind::assign, *p, std::move(values), {}});
+    block_->stmts.push_back({weak ? FlowStmt::Kind::weak : FlowStmt::Kind::assign, *p, std::move(values), {},
+                             "the assignment to '" + display(*p) + "' at " + lineOf(lhs)});
   }
 
   // Platsen för elementen i range-for: behållaren är en känd plats och en typ
@@ -808,6 +816,42 @@ class Builder {
     eval(ex);  // anrop som sats
   }
 
+  // BRZ-7: "at line N" för anteckningarna.
+  std::string lineOf(const Stmt* s) const {
+    const SourceManager& sm = fd_.getASTContext().getSourceManager();
+    return "line " + std::to_string(sm.getExpansionLineNumber(s->getBeginLoc()));
+  }
+
+  static std::string display(const std::string& p) {
+    std::string out;
+    bool skip = false;
+    for (char c : p) {
+      if (c == '@' || c == '~') skip = true;  // fältets klass, lokalens nummer
+      else if (c == '.' || c == '[') skip = false;
+      if (!skip) out += c;
+    }
+    return out;
+  }
+
+  // Är anropet hela satsen (`f(x);`, `(void)f(x);`, ett for-steg), så att
+  // resultatet kastas? Inte i return, en initierare eller ett större uttryck.
+  bool isExpressionStatement(const Expr* e) const {
+    const Stmt* child = e;
+    const Stmt* up = pm_->getParent(e);
+    while (up != nullptr && isa<ParenExpr, FullExpr, CastExpr, CXXBindTemporaryExpr, MaterializeTemporaryExpr>(up)) {
+      child = up;
+      up = pm_->getParent(up);
+    }
+    if (up == nullptr) return false;
+    if (isa<CompoundStmt, CaseStmt, DefaultStmt, AttributedStmt>(up)) return true;
+    if (const auto* i = dyn_cast<IfStmt>(up)) return child == i->getThen() || child == i->getElse();
+    if (const auto* w = dyn_cast<WhileStmt>(up)) return child == w->getBody();
+    if (const auto* d = dyn_cast<DoStmt>(up)) return child == d->getBody();
+    if (const auto* f = dyn_cast<ForStmt>(up)) return child == f->getBody() || child == f->getInc();
+    if (const auto* f = dyn_cast<CXXForRangeStmt>(up)) return child == f->getBody();
+    return false;
+  }
+
   void declare(const Decl* d) {
     const auto* vd = dyn_cast<VarDecl>(d);
     if (vd == nullptr) return;
@@ -879,12 +923,18 @@ class Builder {
       // Inte en känd plats (const T& till ett temporärt resultat): ett värde
       // att läsa, aldrig ett mål (place() ger nullopt).
       FlowValues v = eval(init);
-      block_->stmts.push_back({FlowStmt::Kind::assign, localName(vd), std::move(v), {}});
+      block_->stmts.push_back({FlowStmt::Kind::assign, localName(vd), std::move(v), {}, initNote(*vd)});
       return;
     }
     if (init == nullptr) return;  // oinitierad (Stone avvisar läsning före tilldelning)
     FlowValues v = eval(init);
-    block_->stmts.push_back({FlowStmt::Kind::assign, localName(vd), std::move(v), {}});
+    block_->stmts.push_back({FlowStmt::Kind::assign, localName(vd), std::move(v), {}, initNote(*vd)});
+  }
+
+  // En loopvariabel i range-for behöver inte användas (`for (auto x : v) ++n;`).
+  std::string initNote(const VarDecl& vd) const {
+    if (vd.isCXXForRangeDecl() || vd.isImplicit() || isa<DecompositionDecl>(vd)) return "";
+    return "the initialisation of '" + vd.getNameAsString() + "' at " + lineOf(&*vd.getInit());
   }
 
   // Kör förstörelsen av t egen kod? En implicit eller = default-destruktor

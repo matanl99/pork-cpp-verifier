@@ -17,10 +17,12 @@ void push(std::vector<int>& v, int x) { v.push_back(x); }
 // Två lokaler som heter x är olika platser.
 // flow: return <- nothing
 // flow: out <- a (always written)
+// flow: no effect: the initialisation of 'x' at line 21
 int shadow(int a, int b, int& out) { int x = a; { int x = b; (void)x; } out = x; return 0; }
 
 // Hela p skrivs efter fältet: bara en rad.
 // flow: p <- q (always written)
+// flow: no effect: the assignment to 'p.x' at line 26
 void field_then_whole(P& p, int a, const P& q) { p.x = a; p = q; }
 
 // Nästlade villkor: båda styr.

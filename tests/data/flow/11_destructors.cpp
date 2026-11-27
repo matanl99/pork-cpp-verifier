@@ -23,6 +23,7 @@ struct Defaulted {
   ~Defaulted() = default;
 };
 // flow: return <- x
+// flow: no effect: the initialisation of 'd' at line 28
 int defaulted_dtor(int x) {
   Defaulted d;
   return x;
@@ -35,6 +36,7 @@ struct OutOfLine {
 // flow: not computed: destructor
 OutOfLine::~OutOfLine() = default;
 // flow: return <- x
+// flow: no effect: the initialisation of 'o' at line 41
 int out_of_line_default(int x) {
   OutOfLine o;
   return x;
@@ -107,6 +109,7 @@ int user_dtor_in_variant(int x) {
 }
 // Utan egen kod i typargumenten: flödet räknas.
 // flow: return <- x
+// flow: no effect: the initialisation of 'b' at line 114
 int optional_of_plain(int x) {
   std::optional<Bag> b;
   return x;

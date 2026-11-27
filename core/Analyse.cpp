@@ -43,7 +43,10 @@ int analyse(IFactsSource& source, const TrustList& trust, IReport& report, IProv
     if (f.flow) graphs.emplace(usr, *f.flow);
   }
   std::map<std::string, FlowSummary> flows;
-  if (!graphs.empty() && (showFlow || requirements)) flows = computeFlows(graphs);
+  if (!graphs.empty() && (showFlow || requirements)) {
+    flows = computeFlows(graphs);
+    findNoEffect(graphs, flows);
+  }
   if (showFlow)
     for (const auto& [usr, s] : flows)
       if (verdict.at(usr).isStone())
@@ -79,6 +82,11 @@ int analyse(IFactsSource& source, const TrustList& trust, IReport& report, IProv
         v.bronze = why;
         break;
       }
+    // BRZ-7: en sats eller ett villkor utan verkan.
+    if (v.bronze->empty() && !s->second.noEffect.empty()) {
+      const std::vector<std::string>& n = s->second.noEffect;
+      v.bronze = n.front() + " has no effect" + (n.size() > 1 ? " (+" + std::to_string(n.size() - 1) + " more)" : "");
+    }
   }
 
   if (prover != nullptr) silver(*facts, verdict, *prover, jobs, inScope);

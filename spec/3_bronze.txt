@@ -84,3 +84,22 @@ instance). An instance that does
 not contain the occurrence, such as one where an `if constexpr` branch is
 discarded, does not remove the error. A compilation
 error stays exit status 2.
+
+BRZ-7  No statement without effect
+A statement or condition whose value reaches no output shall be reported in
+the derived flow as `no effect: <what> at line <n>`, and a function with a
+requirement shall then not be Bronze (`stone: not bronze: <what> at line <n>
+has no effect`, BRZ-6). Reaching an output means flowing, directly or through
+later statements, conditions and calls, into the result, an output
+parameter at the normal return or where the function throws (a caller that
+catches sees it), a call of unknown or trusted code, or a call of a function
+with such an effect or one that may throw. What is reported: the
+initialisation of a local (not a range-for variable), an assignment, a call
+that is the whole statement (its result discarded, also with a cast to void
+or as a for step), and the condition of an if, while, for, do or switch
+(`if (valid);`). The branches inside `a && b` and `c ? x : y` are part of a
+value and are not reported on their own. Code that is never reached is not
+reported. The search is SPARK's ineffective statements; a requirement only
+bounds what an output may depend on, so without this rule a function that
+depends on too little (a condition that guards nothing, a discarded check)
+would meet every requirement.

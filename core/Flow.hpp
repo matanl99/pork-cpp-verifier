@@ -49,6 +49,7 @@ struct FlowStmt {
   std::string target;  // assign, weak (weak: det gamla värdet kan finnas kvar)
   FlowValues values;   // assign, weak, ret
   FlowCall call;       // call
+  std::string note;    // BRZ-7: satsen i meddelanden ("the call of 'f' at line 14"); tom: dold, rapporteras inte
   bool operator==(const FlowStmt&) const = default;
 };
 
@@ -56,6 +57,7 @@ struct FlowBlock {
   std::vector<FlowStmt> stmts;
   FlowValues cond;              // villkoret som väljer efterföljare
   std::vector<unsigned> succs;  // index i FlowGraph::blocks
+  std::string condNote;         // BRZ-7: "the condition at line 5"
   bool operator==(const FlowBlock&) const = default;
 };
 
@@ -91,6 +93,12 @@ struct FlowSummary {
   // utdata ("return" eller en plats under en utdataparameter) -> ingångsvärden
   std::map<std::string, std::set<std::string>> deps;
   std::set<std::string> always;  // platser som skrivs på varje normal returväg
+  // Verkan utanför utdata: anrop av okänd kod (eller av en funktion med sådan
+  // verkan), eller ett kast. Ett sådant anrop har alltid verkan (BRZ-7).
+  bool external = false;
+  // BRZ-7: satser och villkor vars värde inte når någon utdata. Räknas efter
+  // fixpunkten (inte en del av den).
+  std::vector<std::string> noEffect;
   bool operator==(const FlowSummary&) const = default;
 };
 
@@ -98,6 +106,9 @@ struct FlowSummary {
 // definition) är okända. Anrop använder den anropades sammanfattning;
 // rekursion löses med fixpunkt.
 std::map<std::string, FlowSummary> computeFlows(const std::map<std::string, FlowGraph>& graphs);
+
+// BRZ-7: fyller FlowSummary::noEffect för varje funktion med känt flöde.
+void findNoEffect(const std::map<std::string, FlowGraph>& graphs, std::map<std::string, FlowSummary>& flows);
 
 // En funktion för sig, med givna sammanfattningar för de anropade.
 FlowSummary summarize(const FlowGraph& g, const std::map<std::string, FlowSummary>& callees);

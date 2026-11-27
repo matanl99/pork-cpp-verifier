@@ -50,6 +50,8 @@ void local_writer(int& out, int x) {
 }
 // Fångst per värde gäller värdet när lambdan skapades, inte när den anropas.
 // flow: return <- a
+// flow: no effect: the assignment to 'a' at line 57
+// flow: no effect: the assignment to 'a' at line 58
 int captured_early(int a, int b) {
   auto f = [a] { return a; };
   a = b;
