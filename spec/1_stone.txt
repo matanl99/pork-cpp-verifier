@@ -646,8 +646,10 @@ not, no user-provided destructor of a class that contains it (the root's type,
 each field's type on the way, the class that declares each field, and their
 bases) shall be able to read x: every `this` in its body shall be the base of
 a chain of fields that is neither a prefix of the rest of the path nor
-extended by it. A method call, `*this` or a destructor without a body counts
-as reading everything. Otherwise `std::move(x) out of C, whose destructor may
+extended by it, or the object of a call of a non-virtual method whose body
+meets the same condition (recursively, each body once). A virtual call, any
+other use of `*this` or a function without a body counts as reading
+everything. Otherwise `std::move(x) out of C, whose destructor may
 read it`. Destroying the moved field itself is permitted.
 
 STN-58  Local iterators

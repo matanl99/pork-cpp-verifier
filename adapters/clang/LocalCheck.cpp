@@ -2828,12 +2828,21 @@ class Checker {
   }
 
   // Kan destruktorn d läsa vägen `rest` i *this? Varje `this` ska vara basen i
-  // en kedja av fält; kedjan får inte överlappa rest (den ena ett prefix av den
-  // andra). Annan användning av this (metodanrop, *this som argument) och en
-  // destruktor utan kropp räknas som läsning.
+  // en kedja av fält som inte överlappar rest (den ena ett prefix av den
+  // andra), eller objektet i ett anrop av en icke-virtuell metod vars kropp i
+  // sin tur uppfyller detta (rekursivt, samma objekt). Annan användning av this
+  // (*this som argument, en virtuell metod, en lambda som fångar this) och en
+  // funktion utan kropp räknas som läsning.
   bool mayRead(const CXXDestructorDecl& d, const std::vector<const FieldDecl*>& rest) const {
+    std::set<const FunctionDecl*> seen;
+    return bodyMayRead(d, rest, seen);
+  }
+
+  bool bodyMayRead(const FunctionDecl& f, const std::vector<const FieldDecl*>& rest,
+                   std::set<const FunctionDecl*>& seen) const {
     const FunctionDecl* def = nullptr;
-    if (!d.hasBody(def) || def->getBody() == nullptr) return true;
+    if (!f.hasBody(def) || def->getBody() == nullptr) return true;
+    if (!seen.insert(def).second) return false;  // redan granskad (rekursion)
     auto& ctx = const_cast<ASTContext&>(types_.context());
     bool found = false;
     std::function<void(const Stmt*)> walk = [&](const Stmt* s) {
@@ -2841,6 +2850,7 @@ class Checker {
       if (isa<CXXThisExpr>(s)) {
         std::vector<const FieldDecl*> chain;
         const Stmt* cur = s;
+        const MemberExpr* method = nullptr;
         for (;;) {
           auto parents = ctx.getParents(*cur);
           const Stmt* up = parents.size() == 1 ? parents[0].get<Stmt>() : nullptr;
@@ -2851,13 +2861,22 @@ class Checker {
             continue;
           }
           const auto* me = dyn_cast_or_null<MemberExpr>(up);
-          const auto* f = me ? dyn_cast<FieldDecl>(me->getMemberDecl()) : nullptr;
-          if (f == nullptr) break;
-          chain.push_back(f);
+          if (me != nullptr && chain.empty() && isa<CXXMethodDecl>(me->getMemberDecl())) method = me;
+          const auto* fd = me ? dyn_cast<FieldDecl>(me->getMemberDecl()) : nullptr;
+          if (fd == nullptr) break;
+          chain.push_back(fd);
           cur = up;
         }
         if (chain.empty()) {
-          found = true;  // metodanrop eller *this
+          // this->g(...): g:s kropp granskas mot samma väg; argumenten granskas
+          // som vanliga deluttryck av anropet.
+          const auto* md = method ? dyn_cast<CXXMethodDecl>(method->getMemberDecl()) : nullptr;
+          const CXXMemberCallExpr* call = nullptr;
+          if (method != nullptr)
+            if (auto up = ctx.getParents(*method); up.size() == 1) call = up[0].get<CXXMemberCallExpr>();
+          if (md == nullptr || call == nullptr || call->getCallee()->IgnoreParens() != method || md->isVirtual() ||
+              bodyMayRead(*md, rest, seen))
+            found = true;
           return;
         }
         std::size_t n = std::min(chain.size(), rest.size());
