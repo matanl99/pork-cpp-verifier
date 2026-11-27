@@ -1262,7 +1262,10 @@ class Checker {
     const auto* spec = dyn_cast_or_null<ClassTemplateSpecializationDecl>(rd);
     // En vy (lånevärde, t.ex. std::span): lånemodellen håller det den lånar
     // levande genom loopen.
-    bool span = !types_.isValueType(range->getType()) && types_.isLoanValue(range->getType());
+    // En betrodd std::string_view är både värdetyp (trust-filen) och vy
+    // ([[gsl::Pointer]]): loopen går över det den lånar.
+    bool span = types_.isLoanValue(range->getType()) &&
+                (!types_.isValueType(range->getType()) || (rd != nullptr && TypeRules::isGslPointerRecord(*rd)));
     std::string tmpl = spec ? spec->getSpecializedTemplate()->getQualifiedNameAsString() : "";
     bool sequence = tmpl == "std::vector" || tmpl == "std::array" ||
                     (tmpl == "std::basic_string" && spec->getTemplateArgs()[0].getAsType()->isCharType());

@@ -132,6 +132,30 @@ visit with lambdas modelled exactly.
 SLV-26  std::span model  [allows]
 std::span<const T> shall be `{size, data}` pointing at the source.
 
+SLV-45  std::string_view model
+std::string_view (std::basic_string_view<char>, a trusted type) shall be
+`{size, const char* data}` pointing at the source, as a std::span<const char>
+(SLV-26), with the assumption `std::string_view size <= N` for a view from
+the harness. A view shall be created only where the source has the same
+storage in C as in C++: a string literal (a static array of its characters
+up to the first NUL; longer than N is a finding, raise --vector-bound),
+another view, or a std::string that is a path rooted in a local variable,
+a value parameter, a non-const reference parameter, a context reference or
+*this of a non-const method. A `const std::string&` parameter, *this of a
+const method and a local const reference are values in C, so a view into
+them would point at the copy: `not silver: cannot translate to C:
+std::string_view into a const std::string& parameter` (or `... into *this
+of a const method`, `... into a local const reference`). size, length,
+empty, ==, !=, copy and assignment shall be modelled exactly; operator[],
+front and back shall check `index < size()` or `!empty()`
+(`precondition of 'std::string_view::operator[]': index < size()`);
+substr(pos, n) shall check `pos <= size()` (it throws std::out_of_range,
+SLV-43) and give at most n characters from pos; remove_prefix and
+remove_suffix shall check `n <= size()`. A range-for over a view that is a
+path shall run size() times. std::string(v) shall copy the characters
+(longer than N is a finding). Other members (find, starts_with, data, ...)
+are not translated yet.
+
 SLV-27  Reference and nullable returns
 A `const T&` return (STN-10) shall be returned as a value, a `const T*`
 return (STN-11) as `{has, v}`; the caller's dereference is checked (SLV-12).

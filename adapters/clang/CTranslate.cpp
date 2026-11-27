@@ -187,6 +187,18 @@ const ClassTemplateSpecializationDecl* stringSpec(const CXXRecordDecl* rd) {
 const ClassTemplateSpecializationDecl* stringSpec(QualType t) {
   return stringSpec(t.getNonReferenceType().getCanonicalType()->getAsCXXRecordDecl());
 }
+// std::basic_string_view<char> (std::string_view), SLV-45.
+const ClassTemplateSpecializationDecl* viewSpec(QualType t) {
+  if (t.isNull()) return nullptr;
+  const auto* spec = dyn_cast_or_null<ClassTemplateSpecializationDecl>(
+      t.getNonReferenceType().getCanonicalType()->getAsCXXRecordDecl());
+  if (spec == nullptr || spec->getName() != "basic_string_view" || !spec->isInStdNamespace()) return nullptr;
+  const TemplateArgumentList& args = spec->getTemplateArgs();
+  if (args.size() == 0 || args[0].getKind() != TemplateArgument::Type) return nullptr;
+  QualType ch = args[0].getAsType();
+  if (!ch->isSpecificBuiltinType(BuiltinType::Char_S) && !ch->isSpecificBuiltinType(BuiltinType::Char_U)) return nullptr;
+  return spec;
+}
 // Sekvens: std::vector<T> eller std::string, samma modell { size, data[N] }.
 const ClassTemplateSpecializationDecl* sequenceSpec(const CXXRecordDecl* rd) {
   if (const auto* v = vectorSpec(rd)) return v;
@@ -311,10 +323,13 @@ class Translator {
       if (pointer) pointers_.insert(p);
       add(ct + (pointer ? " *" : " ") + name);
       std::string h = "pork_a" + std::to_string(i);
-      if (const auto* spec = constSpanSpec(t)) {
+      const auto* spanSpec = constSpanSpec(t);
+      const auto* view = viewSpec(t);
+      if (spanSpec != nullptr || view != nullptr) {
         // En egen array med N element; size <= N eftersom spanen alltid kommer
-        // från en vektor (Stone).
-        QualType et = spanElement(*spec);
+        // från en vektor (Stone), och en vy från en sträng, en kontrollerad
+        // literal eller en annan vy (SLV-45).
+        QualType et = spanSpec != nullptr ? spanElement(*spanSpec) : ctx_.CharTy;
         TRY(ect, cType(et));
         // Arrayen i en omslagsstruct, så att den kan komma från en
         // nondet-funktion (en funktion kan inte returnera en array).
@@ -328,7 +343,8 @@ class Translator {
           harness += "  for (unsigned long " + k + " = 0; " + k + " < " + bound() + "; ++" + k + ") {\n" + inner + "  }\n";
         harness += "  " + ct + " " + h + " = " + nondet(ct) + ";\n  " + h + ".data = " + d + ".v;\n  __CPROVER_assume(" +
                    h + ".size <= " + bound() + ");\n";
-        out_.assumptions.insert("std::vector size <= " + std::to_string(options_.vectorBound));
+        out_.assumptions.insert(std::string(view != nullptr ? "std::string_view" : "std::vector") + " size <= " +
+                                std::to_string(options_.vectorBound));
         harnessArgs.push_back(h);
         continue;
       }
@@ -713,9 +729,11 @@ class Translator {
       QualType t = p->getType();
       bool output = t->isReferenceType() && !t->getPointeeType().isConstant(ctx_);
       std::string a = "pork_a" + std::to_string(i), b = "pork_b" + std::to_string(i);
-      if (const auto* spec = constSpanSpec(t.getNonReferenceType())) {
+      const auto* oracleSpan = constSpanSpec(t.getNonReferenceType());
+      if (oracleSpan != nullptr || viewSpec(t) != nullptr) {
         std::string k = "pork_q" + std::to_string(++loops_);
-        auto v = sameValue(spanElement(*spec), a + ".data[" + k + "]", b + ".data[" + k + "]", false);
+        auto v = sameValue(oracleSpan != nullptr ? spanElement(*oracleSpan) : ctx_.CharTy, a + ".data[" + k + "]",
+                           b + ".data[" + k + "]", false);
         if (!v) {
           out_.oracleWhy = "type of '" + path + "'";
           return;
@@ -870,6 +888,7 @@ class Translator {
     if (const auto* spec = sequenceSpec(rd)) return vectorStruct(*spec);
     if (const auto* spec = variantSpec(rd)) return variantStruct(*spec);
     if (const auto* spec = constSpanSpec(ctx_.getCanonicalTagType(rd))) return spanStruct(*spec);
+    if (const auto* spec = viewSpec(ctx_.getCanonicalTagType(rd))) return viewStruct(*spec);
     if (sm_.isInSystemHeader(rd->getLocation()))
       return fail("type " + recordName(*rd) + " (trusted type) is not supported yet");
     // SLV-40: i C är en kopia alltid bitvis. En egen kopierings-/flyttfunktion
@@ -1241,6 +1260,209 @@ class Translator {
     TRY(t, cType(spanType));
     TRY(v, expr(src));
     return "((" + t + "){" + v + ".size, " + v + ".data})";
+  }
+
+  // --- std::string_view (SLV-45) -----------------------------------------------
+
+  // { size, const char* data }, som en span<const char>. size <= N gäller
+  // alltid: en vy kommer från en sträng (size <= N), en literal som
+  // kontrolleras vid skapandet, en del av en annan vy eller testramen.
+  Text viewStruct(const ClassTemplateSpecializationDecl& spec) {
+    std::string name = "struct p_" + ident(recordName(spec)) + "_" + hash8(usrOf(spec));
+    if (types_.contains(name)) return name;
+    types_.insert(name);
+    out_.decls.emplace_back(name, name + " {\n  unsigned long size;\n  const char *data;\n};\n");
+    std::string h = optionalHelper(name);
+    out_.decls.emplace_back(h + "__eq", "static _Bool " + h + "__eq(" + name + " a, " + name + " b)\n{\n" +
+                                            "  if (a.size != b.size) return 0;\n  for (unsigned long i = 0; i < a.size && i < " +
+                                            bound() + "; ++i)\n    if (a.data[i] != b.data[i]) return 0;\n  return 1;\n}\n");
+    return name;
+  }
+
+  static std::string viewMessage(const std::string& op, const std::string& cond) {
+    return "precondition of 'std::string_view::" + op + "': " + cond;
+  }
+
+  // "abc" som vy: tecknen fram till första NUL (konstruktorn tar const char*
+  // och räknar med traits::length) i en statisk array, som i C++ lever hela
+  // programmet. Längre än N: ett fynd, och bara de första N tecknen.
+  Text viewLiteral(QualType viewType, const StringLiteral& lit) {
+    TRY(name, cType(viewType));
+    llvm::StringRef bytes = lit.getBytes();
+    bytes = bytes.take_until([](char ch) { return ch == '\0'; });
+    std::size_t n = std::min<std::size_t>(bytes.size(), options_.vectorBound);
+    std::string data;
+    for (std::size_t i = 0; i < n; ++i) data += std::to_string(static_cast<int>(static_cast<signed char>(bytes[i]))) + ", ";
+    std::string array = "pork_lit_" + hash8(bytes.take_front(n).str()) + "_" + std::to_string(n);
+    out_.decls.emplace_back(array, "static const char " + array + "[] = {" + data + "0};\n");
+    std::string value = "((" + name + "){" + std::to_string(n) + "ul, " + array + "})";
+    if (bytes.size() <= options_.vectorBound) return value;
+    return "(__CPROVER_assert(0, " +
+           quoted("std::string_view longer than " + std::to_string(options_.vectorBound) +
+                  " characters (raise --vector-bound)") +
+           "), " + value + ")";
+  }
+
+  // Varför en vy in i e (en std::string som är en väg) skulle peka på en
+  // kopia i C, eller nullopt. `const T&`-parametrar och *this i en const-metod
+  // är värden i C; en lokal const-referens kan vara en kopia (SLV-42).
+  std::optional<std::string> viewSourceProblem(const Expr* e) const {
+    for (;;) {
+      e = strip(e);
+      if (const auto* c = dyn_cast<ImplicitCastExpr>(e);
+          c != nullptr && (c->getCastKind() == CK_LValueToRValue || c->getCastKind() == CK_NoOp ||
+                           c->getCastKind() == CK_UncheckedDerivedToBase || c->getCastKind() == CK_DerivedToBase)) {
+        e = c->getSubExpr();
+        continue;
+      }
+      if (const auto* dr = dyn_cast<DeclRefExpr>(e)) {
+        const auto* vd = dyn_cast<VarDecl>(dr->getDecl());
+        if (vd == nullptr || !vd->hasLocalStorage()) return "std::string_view into a variable with static storage";
+        if (const auto* ref = vd->getType()->getAs<ReferenceType>()) {
+          if (pointers_.contains(vd)) return std::nullopt;
+          if (isa<ParmVarDecl>(vd) && ref->getPointeeType().isConstQualified())
+            return "std::string_view into a const std::string& parameter";
+          return "std::string_view into a local const reference";
+        }
+        return std::nullopt;
+      }
+      if (isa<CXXThisExpr>(e)) {
+        if (self_ == Self::pointer) return std::nullopt;
+        return "std::string_view into *this of a const method";
+      }
+      if (const auto* u = dyn_cast<UnaryOperator>(e); u != nullptr && u->getOpcode() == UO_Deref) {
+        e = u->getSubExpr();
+        continue;
+      }
+      if (const auto* m = dyn_cast<MemberExpr>(e)) {
+        const auto* f = dyn_cast<FieldDecl>(m->getMemberDecl());
+        if (f == nullptr) return "std::string_view into this expression";
+        if (f->getType()->isReferenceType()) return std::nullopt;  // en pekare i C (kontextreferens)
+        e = m->getBase();
+        continue;
+      }
+      if (const auto* c = dyn_cast<CXXMemberCallExpr>(e)) {  // v[i], front(), value(): elementet i objektet
+        e = c->getImplicitObjectArgument();
+        continue;
+      }
+      if (const auto* c = dyn_cast<CXXOperatorCallExpr>(e); c != nullptr && c->getNumArgs() >= 1 &&
+                                                            (c->getOperator() == OO_Subscript || c->getOperator() == OO_Star)) {
+        e = c->getArg(0);
+        continue;
+      }
+      return "std::string_view into this expression";
+    }
+  }
+
+  // std::string -> std::string_view (operator basic_string_view): en vy in i
+  // strängens data. Strängen ska vara en väg vars lagring är densamma i C.
+  Text viewFromString(QualType viewType, const Expr* object) {
+    if (!isPath(object)) return fail("std::string_view into a temporary std::string");
+    if (auto why = viewSourceProblem(object)) return fail(*why);
+    TRY(t, cType(viewType));
+    TRY(o, expr(object));
+    return "((" + t + "){" + o + ".size, " + o + ".data})";
+  }
+
+  Text viewConstruct(const CXXConstructExpr& c) {
+    const CXXConstructorDecl* ctor = c.getConstructor();
+    if (ctor->isCopyOrMoveConstructor() && c.getNumArgs() == 1) return expr(c.getArg(0));
+    if (c.getNumArgs() == 0) return zero(c.getType());
+    if (c.getNumArgs() == 1 && ctor->getNumParams() == 1)
+      if (const StringLiteral* lit = stringLiteralArg(c.getArg(0), ctor->getParamDecl(0)->getType()))
+        return viewLiteral(c.getType(), *lit);
+    return fail("constructor of std::string_view");
+  }
+
+  // std::string(v): tecknen kopieras; längre än N är ett fynd (som +=).
+  Text stringFromView(QualType stringType, const Expr* view) {
+    TRY(st, cType(stringType));
+    TRY(vt, cType(view->getType().getNonReferenceType().getUnqualifiedType()));
+    TRY(v, expr(view));
+    TRY(z, zero(stringType));
+    std::string k = std::to_string(++loops_);
+    std::string fv = "pork_fv" + k, fs = "pork_fs" + k, fi = "pork_fi" + k;
+    return "({ " + vt + " " + fv + " = " + v + "; " + st + " " + fs + " = " + z + "; __CPROVER_assert(" + fv +
+           ".size <= " + bound() + ", " + quoted(vectorGrowMessage("std::string")) + "); for (unsigned long " + fi +
+           " = 0; " + fi + " < " + fv + ".size && " + fi + " < " + bound() + "; ++" + fi + ") " + fs + ".data[" + fi +
+           "] = " + fv + ".data[" + fi + "]; " + fs + ".size = " + fv + ".size <= " + bound() + " ? " + fv + ".size : " +
+           bound() + "; " + fs + "; })";
+  }
+
+  // Metoder på en vy. Objektet utvärderas en gång (en temporär), utom där
+  // metoden ändrar vyn (remove_prefix/suffix, =): där är det en väg.
+  Text viewCall(const CallExpr& c, const CXXMethodDecl& md, const Expr* object, unsigned first) {
+    std::string member = memberName(md);
+    unsigned nargs = c.getNumArgs() - first;
+    auto given = [&](unsigned i) { return i < nargs && !isa<CXXDefaultArgExpr>(c.getArg(first + i)); };
+    TRY(vt, cType(object->getType().getNonReferenceType().getUnqualifiedType()));
+    TRY(o, expr(object));
+    std::string k = std::to_string(++loops_);
+    std::string w = "pork_vw" + k;
+    if ((member == "size" || member == "length") && nargs == 0) return "(" + o + ").size";
+    if (member == "empty" && nargs == 0) return "((" + o + ").size == 0)";
+    if ((member == "operator[]" || member == "at" || member == "front" || member == "back") &&
+        nargs == (member == "operator[]" || member == "at" ? 1u : 0u)) {
+      std::string index = member == "front" ? "0ul" : member == "back" ? w + ".size - 1" : "";
+      if (index.empty()) {
+        TRY(i, expr(c.getArg(first)));
+        index = "(unsigned long)(" + i + ")";
+      }
+      std::string i = "pork_vi" + k;
+      std::string cond = member == "front" || member == "back" ? w + ".size > 0" : i + " < " + w + ".size";
+      std::string msg = viewMessage(member, member == "front" || member == "back" ? "!empty()" : "index < size()");
+      return "(*({ " + vt + " " + w + " = " + o + "; unsigned long " + i + " = " + index + "; __CPROVER_assert(" +
+             cond + ", " + quoted(msg) + "); &" + w + ".data[" + i + "]; }))";
+    }
+    if (member == "substr" && nargs <= 2) {
+      std::string pos = "0ul";
+      if (given(0)) {
+        TRY(x, expr(c.getArg(first)));
+        pos = "(unsigned long)(" + x + ")";
+      }
+      std::string pv = "pork_vp" + k, rv = "pork_vr" + k;
+      std::string limit;
+      if (given(1)) {
+        TRY(x, expr(c.getArg(first + 1)));
+        limit = "if ((unsigned long)(" + x + ") < " + rv + ") " + rv + " = (unsigned long)(" + x + "); ";
+      }
+      // pos > size() kastar std::out_of_range ([string.view.ops]): ett fynd (SLV-43).
+      return "({ " + vt + " " + w + " = " + o + "; unsigned long " + pv + " = " + pos + "; __CPROVER_assert(" + pv +
+             " <= " + w + ".size, " + quoted(viewMessage("substr", "pos <= size()")) + "); if (" + pv + " > " + w +
+             ".size) " + pv + " = " + w + ".size; unsigned long " + rv + " = " + w + ".size - " + pv + "; " + limit +
+             "(" + vt + "){" + rv + ", " + w + ".data + " + pv + "}; })";
+    }
+    if ((member == "remove_prefix" || member == "remove_suffix") && nargs == 1) {
+      if (!isPath(object)) return fail("std::string_view::" + member + " on a temporary");
+      TRY(x, expr(c.getArg(first)));
+      std::string nv = "pork_vn" + k;
+      std::string move = member == "remove_prefix" ? o + ".data = " + o + ".data + " + nv + "; " : "";
+      return "({ unsigned long " + nv + " = (unsigned long)(" + x + "); __CPROVER_assert(" + nv + " <= " + o +
+             ".size, " + quoted(viewMessage(member, "n <= size()")) + "); if (" + nv + " <= " + o + ".size) { " + move +
+             o + ".size = " + o + ".size - " + nv + "; } })";
+    }
+    if (member == "operator=" && nargs == 1) {
+      if (!isPath(object)) return fail("std::string_view::operator= on a temporary");
+      TRY(x, expr(c.getArg(first)));
+      return "(" + o + " = " + x + ")";
+    }
+    return fail("std::string_view::" + member + " is not supported");
+  }
+
+  // Fria funktioner på vyer: == och !=.
+  std::optional<Text> viewFunction(const CallExpr& c) {
+    const auto* oc = dyn_cast<CXXOperatorCallExpr>(&c);
+    if (oc == nullptr || c.getNumArgs() != 2) return std::nullopt;
+    if (viewSpec(c.getArg(0)->getType()) == nullptr || viewSpec(c.getArg(1)->getType()) == nullptr) return std::nullopt;
+    OverloadedOperatorKind op = oc->getOperator();
+    if (op != OO_EqualEqual && op != OO_ExclaimEqual) return std::nullopt;
+    auto name = cType(c.getArg(0)->getType().getNonReferenceType().getUnqualifiedType());
+    if (!name) return Text(std::unexpected(name.error()));
+    auto x = expr(c.getArg(0));
+    if (!x) return x;
+    auto y = expr(c.getArg(1));
+    if (!y) return y;
+    return Text(std::string(op == OO_ExclaimEqual ? "!" : "") + optionalHelper(*name) + "__eq(" + *x + ", " + *y + ")");
   }
 
   std::string vectorGrowMessage(const std::string& seq = "std::vector") const {
@@ -2271,6 +2493,7 @@ class Translator {
       if (auto r = variantFunction(c, *callee)) return *r;
       if (auto r = optionalCompare(c, *callee)) return *r;
       if (auto r = stringFunction(c)) return *r;
+      if (auto r = viewFunction(c)) return *r;
     }
 
     const Expr* object = nullptr;
@@ -2291,12 +2514,16 @@ class Translator {
     if (const auto* md = dyn_cast<CXXMethodDecl>(callee); md != nullptr && md->isInstance()) {
       if (const auto* spec = optionalSpec(md->getParent()))
         return optionalCall(c, *md, object, first, *spec);
+      if (const auto* conv = dyn_cast<CXXConversionDecl>(md);
+          conv != nullptr && stringSpec(md->getParent()) != nullptr && viewSpec(conv->getConversionType()) != nullptr)
+        return viewFromString(conv->getConversionType(), object);
       if (const auto* spec = stringSpec(md->getParent()))
         return stringCall(c, *md, object, first, *spec);
       if (const auto* spec = vectorSpec(md->getParent()))
         return vectorCall(c, *md, object, first, *spec);
       if (constSpanSpec(ctx_.getCanonicalTagType(md->getParent())) != nullptr)
         return spanCall(c, *md, object, first);
+      if (viewSpec(ctx_.getCanonicalTagType(md->getParent())) != nullptr) return viewCall(c, *md, object, first);
       if (const auto* spec = variantSpec(md->getParent()))
         return variantCall(c, *md, object, first, *spec);
       if (stdArraySpec(ctx_.getCanonicalTagType(md->getParent())) != nullptr)
@@ -2440,6 +2667,7 @@ class Translator {
       }
       return fail("constructor of " + recordName(*spec));
     }
+    if (viewSpec(c.getType()) != nullptr) return viewConstruct(c);
     if (constSpanSpec(c.getType()) != nullptr) {
       if (const Expr* src = spanSource(&c, ctx_)) return spanFrom(c.getType(), src);
       return fail("constructor of " + recordName(*ctor->getParent()));
@@ -2447,6 +2675,10 @@ class Translator {
     if (const auto* spec = sequenceSpec(ctor->getParent())) {
       if (ctor->isCopyOrMoveConstructor() && c.getNumArgs() == 1) return expr(c.getArg(0));
       if (c.getNumArgs() == 0) return zero(c.getType());
+      // std::string(v) med en vy (SLV-45).
+      if (stringSpec(spec) != nullptr && c.getNumArgs() >= 1 && viewSpec(c.getArg(0)->getType()) != nullptr &&
+          (c.getNumArgs() == 1 || isa<CXXDefaultArgExpr>(c.getArg(1))))
+        return stringFromView(c.getType(), c.getArg(0));
       // std::string s = "abc" (och en temporär till const std::string&).
       if (stringSpec(spec) != nullptr && c.getNumArgs() >= 1 && ctor->getNumParams() >= 1)
         if (const StringLiteral* lit = stringLiteralArg(c.getArg(0), ctor->getParamDecl(0)->getType()))
@@ -2701,7 +2933,8 @@ class Translator {
       return "{\n" + at + "unsigned long " + i + ";\n" + at + "for (" + i + " = 0; " + i + " < " + n + "; " + i +
              "++)\n{\n" + decl + b + "}\n}\n";
     }
-    if ((!sequenceSpec(range->getType()) || !isPath(range)) && spanParam(range) == nullptr)
+    if ((!sequenceSpec(range->getType()) || !isPath(range)) && spanParam(range) == nullptr &&
+        (viewSpec(range->getType()) == nullptr || !isPath(range)))
       return fail("range-for over this expression");
     TRY(v, expr(range));
     const VarDecl& var = *rf.getLoopVariable();
@@ -2746,7 +2979,7 @@ class Translator {
     if (mc == nullptr || mc->getNumArgs() != 0) return false;
     const CXXMethodDecl* md = mc->getMethodDecl();
     QualType t = mc->getImplicitObjectArgument()->getType();
-    return md != nullptr && md->getName() == "size" && (vectorSpec(t) || constSpanSpec(t));
+    return md != nullptr && md->getName() == "size" && (vectorSpec(t) || constSpanSpec(t) || viewSpec(t));
   }
 
   // Referens till ett element: (kontrollsats, adress). v[i], v.at(i), front,

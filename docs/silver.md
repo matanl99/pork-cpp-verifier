@@ -122,7 +122,8 @@ garanterar att vektorn inte ändras medan referensen lever, så pekaren är gilt
 `std::string` översätts som en `std::vector<char>` med samma gräns (se
 [den svenska referensen](reference.sv.md#stdstring)), och `std::variant` beskrivs [nedan](#stdvariant-get_if-och-lambdor).
 Av standardbibliotekets typer översätts bara `std::optional`, `std::vector`, `std::string`,
-`std::variant`, `std::span<const T>` och `std::array` ([nedan](#ägda-arrayer-slv-44)). Andra
+`std::variant`, `std::span<const T>`, `std::string_view` ([nedan](#stdstring_view-slv-45)) och `std::array`
+([nedan](#ägda-arrayer-slv-44)). Andra
 betrodda typer (t.ex. `std::map`, `std::unique_ptr`) ger "trusted type ... is not supported yet".
 
 ## Ägda arrayer (SLV-44)
@@ -183,6 +184,33 @@ Korpus 140.
 
 Inte än: element som byggs av en egen konstruktor, `std::array<T, 0>`, iteratorer och `data()`,
 och fria funktioner (`==`, `std::get`, `std::swap`: "no contract for ..."). Korpus 139.
+
+## `std::string_view` (SLV-45)
+
+Betrodd typ (`type std::basic_string_view`, `std::basic_string_view::*`). En vy är
+`struct { unsigned long size; const char *data; }` som pekar in i källan, som
+`std::span<const char>`. En vy från testramen får en egen array med N tecken och
+antagandet `std::string_view size <= N`.
+
+| C++ | C |
+|---|---|
+| `std::string_view v = s;` (s en väg) | `{s.size, s.data}` |
+| `"abc"` som vy | `{3, pork_lit_<hash>_3}`, en statisk array; längre än N är ett fynd |
+| `v.size()`, `v.length()`, `v.empty()`, `v == w` | `v.size`, `v.size == 0`, `<typ>__eq(v, w)` |
+| `v[i]`, `v.front()`, `v.back()` | `v.data[i]` efter `assert(i < v.size)` / `assert(v.size > 0)` |
+| `v.substr(pos, n)` | `assert(pos <= v.size)` (kastar annars), `{min(n, size - pos), data + pos}` |
+| `v.remove_prefix(n)`, `v.remove_suffix(n)` | `assert(n <= v.size)`, sedan `data += n`/`size -= n` |
+| `for (char c : v)` | som för en vektor, `i < v.size && i < N` |
+| `std::string(v)` | tecknen kopieras, `assert(v.size <= N)` |
+
+Källan ska ha samma lagring i C som i C++. En `const std::string&`-parameter och `*this`
+i en const-metod är värden (kopior) i C, så en vy in i dem pekade på kopian och dinglade
+när funktionen returnerade: de avböjs ("std::string_view into a const std::string&
+parameter"). Lånen själva kontrolleras av Stone (STN-62); att ett element skrivs medan en
+vy lever (`o[0] = 'X'`) syns i vyn, i C som i C++. Korpus 142.
+
+Inte än: vyer in i `const std::string&`-parametrar (kräver att parametern blir en pekare
+i C), `find`, `starts_with`, `compare`, `data()`, och jämförelser mellan `std::string` och vy.
 
 ## ESBMC som bevisare
 

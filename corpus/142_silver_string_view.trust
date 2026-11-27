@@ -1,0 +1,7 @@
+type std::basic_string
+std::basic_string::*
+type std::allocator
+std::allocator::*
+type std::basic_string_view
+std::basic_string_view::*
+std::operator==

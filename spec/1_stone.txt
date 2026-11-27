@@ -386,7 +386,8 @@ part of the loan model (STN-62).
 
 STN-35  Range-for borrows
 A range-for shall be over a path to a std::vector, std::string, std::map,
-std::set or a std::span parameter; what the loop body may change while the
+std::set, a std::span parameter or a view (a loan value, also a
+std::string_view that the trust file makes a value type); what the loop body may change while the
 iteration lives is decided by the loan model (STN-62). Iteration over std::map and std::set shall use copies
 or const element references. Const reference structured bindings over
 std::map are permitted when they use std::get.
