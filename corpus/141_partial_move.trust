@@ -1,0 +1,8 @@
+type std::basic_string
+std::basic_string::*
+type std::allocator
+std::allocator::*
+std::operator==
+std::operator+
+type std::vector
+std::vector::*

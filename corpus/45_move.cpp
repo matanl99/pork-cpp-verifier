@@ -2,8 +2,8 @@
 //
 // std::move(x) (STN-57): efter en move är x giltigt men ospecificerat. x ska
 // vara (en väg i) en lokal variabel eller värdeparameter, och får inte
-// användas efteråt (clangs LiveVariables; en senare tilldelning räknas också
-// som användning, försiktigt) eller i samma anrop (ospecificerad ordning).
+// användas efteråt förrän den tilldelats igen (STN-96, se
+// 141_partial_move.cpp) eller i samma anrop (ospecificerad ordning).
 // Silver: en kopia.
 
 #include <string>
@@ -28,12 +28,12 @@ int moved_len(std::string s) { std::string t = std::move(s); return int(t.size()
 // expect: not-stone: 's' is used after std::move(s)
 int used_after(std::string s) { std::string t = std::move(s); return int(s.size() + t.size()); }
 
-// rules: STN-57
-// expect: not-stone: 'line' is used after std::move(line)
+// rules: STN-57, STN-96, SLV-13
+// expect: stone: not silver: std::vector may grow beyond 4 elements
 void reassigned(Log& log, std::string line) { log.lines.push_back(std::move(line)); line = "x"; }
 
-// rules: STN-57
-// expect: not-stone: 'line' is used after std::move(line)
+// rules: STN-57, STN-96
+// expect: not-stone: std::move(line) in a loop
 void in_loop(Log& log, std::string line, int n) { for (int i = 0; i < n; ++i) log.lines.push_back(std::move(line)); }
 
 // rules: STN-57

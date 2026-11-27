@@ -565,9 +565,8 @@ the contract file`.
 STN-57  std::move
 For `std::unique_ptr` see STN-90. `std::move(x)` shall be allowed where x is a path rooted in a local
 variable or value parameter (not a reference; for the source of a move
-constructor or assignment see STN-72) whose root is not used after
-the call (clang's LiveVariables over the function; a later assignment counts
-as a use) and does not occur anywhere else in the same full-expression,
+constructor or assignment see STN-72) that is not used after the call before
+it is assigned again (STN-96) and whose root does not occur anywhere else in the same full-expression,
 directly or through a local reference: after a move, the value is valid but
 unspecified, and the order of operands and arguments is unspecified, so
 neither source order nor the CFG tells whether another occurrence runs before
@@ -583,6 +582,31 @@ call's other effects (P-d): an argument for a non-const `T&&` parameter, or
 the object of a non-const `&&`-qualified method (`o.value_or(std::move(v))`,
 `std::move(o).value_or(d)`), is written, and loans into its owned storage
 die.
+
+STN-96  Moving a path out of a live object
+Where the root of x in `std::move(x)` (STN-57) is still used after the call
+(clang's LiveVariables, or a local lambda that captures it by reference), the
+uses shall be followed forward from the move through the function's CFG, on
+every path: no path that overlaps x (x itself, a path into x, an object that
+contains x, a local reference or structured binding that reaches one of
+them, a copy or call of a local lambda that captures the root by reference)
+shall occur until x, or an object that contains x, is assigned as a whole,
+or the root is declared anew (a variable in a loop body). A whole assignment
+is the built-in `=`, or an `operator=` that is implicit, defaulted or std,
+whose right-hand side has no such occurrence; a user-provided `operator=`,
+`+=` or any other call is a use. Siblings stay usable (`std::string n =
+std::move(p.namn); p.stad += "s";`). A path through an element (`v[i].f`)
+shall keep the rule of STN-57 (the root is not used after the call), since
+the element is unknown. A move that the search reaches again without such
+an assignment is in a loop and shall be rejected. Where x is a field, the
+classes that contain it (the root's type and each field on the way, and
+their bases) shall have no user-provided destructor, which would see the
+moved field. A path that may have been moved counts as moved: a move in one
+branch followed by a use after the branches is rejected unless every branch
+assigns. Otherwise `'y' is used after std::move(x)`, `std::move(x) in a
+loop` or `std::move(x) out of C, which has a user-provided destructor`.
+Silver: a copy of x (STN-57); since x is not read before it is assigned, the
+copy does not change the meaning.
 
 STN-58  Local iterators
 A local iterator is a loan value (STN-39); it may be initialised by any

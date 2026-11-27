@@ -32,6 +32,7 @@
 #include <expected>
 #include <functional>
 #include <map>
+#include <memory>
 #include <optional>
 #include <set>
 #include <utility>
@@ -1023,7 +1024,10 @@ class Checker {
   void allowMemberRef() { memberRef_ = true; }
 
   // Levande variabler efter varje uttryck i funktionens CFG (STN-57, std::move).
-  void setLiveness(std::map<const Stmt*, std::set<const VarDecl*>> live) { liveAfter_ = std::move(live); }
+  void setLiveness(const FunctionDecl& fd, std::map<const Stmt*, std::set<const VarDecl*>> live) {
+    liveAfter_ = std::move(live);
+    moveFunction_ = &fd;
+  }
 
   Checker(TypeRules& types, std::map<std::string, Callee>& callees, std::set<const VarDecl*>& written)
       : types_(types), callees_(callees), written_(written) {}
@@ -2647,12 +2651,201 @@ class Checker {
     auto it = liveAfter_.find(call);
     if (it == liveAfter_.end())
       return "cannot tell whether '" + root->getNameAsString() + "' is used after std::move";
-    if (it->second.contains(root))
-      return "'" + root->getNameAsString() + "' is used after std::move(" + p->text + ")";
+    bool live = it->second.contains(root);
+    const VarDecl* liveRef = nullptr;
     for (const auto& [var, path] : refs_)  // en referens in i roten som används efteråt
-      if (path.root == root && it->second.contains(var))
-        return "'" + var->getNameAsString() + "' is used after std::move(" + p->text + ")";
+      if (path.root == root && it->second.contains(var)) liveRef = var;
+    // STN-96: lambdor som fångar roten med referens räknas inte av
+    // LiveVariables; sökningen nedan ser anropen av dem.
+    if (!live && liveRef == nullptr && !capturedByReference(root)) return expr(arg);
+    if (p->open) {  // v[i].f: vilket element är okänt, roten ska vara död
+      if (live) return "'" + root->getNameAsString() + "' is used after std::move(" + p->text + ")";
+      if (liveRef != nullptr) return "'" + liveRef->getNameAsString() + "' is used after std::move(" + p->text + ")";
+    }
+    if (auto r = usedAfterMove(call, *p)) return r;
     return expr(arg);
+  }
+
+  // STN-96: finns en lokal lambda som fångar v med referens?
+  bool capturedByReference(const VarDecl* v) const {
+    if (moveFunction_ == nullptr || !moveFunction_->hasBody()) return false;
+    bool found = false;
+    std::function<void(const Stmt*)> walk = [&](const Stmt* s) {
+      if (s == nullptr || found) return;
+      if (const auto* l = dyn_cast<LambdaExpr>(s))
+        for (const LambdaCapture& c : l->captures())
+          if (c.capturesVariable() && c.getCaptureKind() == LCK_ByRef && c.getCapturedVar() == v) found = true;
+      for (const Stmt* c : s->children()) walk(c);
+    };
+    walk(moveFunction_->getBody());
+    return found;
+  }
+
+  // En lokal variabel vars typ är en lambda som fångar root med referens:
+  // att använda den (anropa, kopiera) använder root.
+  bool closureOf(const ValueDecl* d, const Decl* root) const {
+    const auto* vd = dyn_cast<VarDecl>(d);
+    const CXXRecordDecl* rd = vd ? vd->getType().getNonReferenceType()->getAsCXXRecordDecl() : nullptr;
+    if (rd == nullptr || !rd->isLambda()) return false;
+    for (const LambdaCapture& c : rd->captures())
+      if (c.capturesVariable() && c.getCaptureKind() == LCK_ByRef && c.getCapturedVar() == root) return true;
+    return false;
+  }
+
+  const CFG* moveCfg() {
+    if (moveCfg_ != nullptr || moveFunction_ == nullptr || !moveFunction_->hasBody()) return moveCfg_;
+    moveCfgManager_ = std::make_unique<AnalysisDeclContextManager>(const_cast<ASTContext&>(types_.context()));
+    moveCfgManager_->getCFGBuildOptions().setAllAlwaysAdd();
+    moveCfgManager_->getCFGBuildOptions().AddInitializers = true;
+    AnalysisDeclContext* ac = moveCfgManager_->getContext(moveFunction_);
+    if (ac == nullptr || ac->getCFG() == nullptr) return nullptr;
+    restoreCoveredSwitchDefaults(*ac->getCFG());
+    moveCfg_ = ac->getCFG();
+    return moveCfg_;
+  }
+
+  // STN-96: std::move(p) där roten lever vidare. Från flytten framåt i CFG:n
+  // (alla vägar) får ingen väg som överlappar p förekomma (p, något i p, ett
+  // objekt som rymmer p, en referens eller lambda som når dem) förrän p eller
+  // något som rymmer p tilldelas helt, eller roten deklareras på nytt. Når
+  // sökningen flytten igen är den i en loop utan ny tilldelning.
+  Reason usedAfterMove(const Expr* call, const Path& moved) {
+    const auto* root = cast<VarDecl>(moved.root);
+    const std::string what = "std::move(" + moved.text + ")";
+    for (std::size_t i = 0; i < moved.fields.size(); ++i) {  // typerna som rymmer vägen
+      QualType t = i == 0 ? root->getType() : moved.fields[i - 1]->getType();
+      if (auto r = ownDestructor(t, what)) return r;
+    }
+    const CFG* cfg = moveCfg();
+    if (cfg == nullptr) return "cannot tell whether '" + root->getNameAsString() + "' is used after std::move";
+    std::set<const DeclRefExpr*> own;
+    std::function<void(const Stmt*)> mark = [&](const Stmt* s) {
+      if (s == nullptr) return;
+      if (const auto* dr = dyn_cast<DeclRefExpr>(s)) own.insert(dr);
+      for (const Stmt* c : s->children()) mark(c);
+    };
+    mark(call);
+    std::vector<std::pair<const CFGBlock*, unsigned>> todo;
+    for (const CFGBlock* b : *cfg)
+      for (unsigned i = 0; i < b->size(); ++i)
+        if (auto cs = (*b)[i].getAs<CFGStmt>(); cs && cs->getStmt() == call) todo.push_back({b, i + 1});
+    if (todo.empty()) return "cannot tell whether '" + root->getNameAsString() + "' is used after std::move";
+    std::map<const DeclRefExpr*, bool> seen;  // true = tilldelning som avslutar sökningen
+    std::set<const CFGBlock*> visited;
+    while (!todo.empty()) {
+      auto [b, i] = todo.back();
+      todo.pop_back();
+      bool stop = false;
+      for (; i < b->size() && !stop; ++i) {
+        const Stmt* s = nullptr;
+        if (auto cs = (*b)[i].getAs<CFGStmt>()) s = cs->getStmt();
+        else if (auto ci = (*b)[i].getAs<CFGInitializer>()) s = ci->getInitializer()->getInit();
+        if (s == nullptr) continue;
+        if (s == call) return what + " in a loop";
+        if (const auto* ds = dyn_cast<DeclStmt>(s); ds != nullptr && llvm::is_contained(ds->decls(), root)) {
+          stop = true;  // en ny variabel (loopkroppen)
+          break;
+        }
+        if (auto r = usesAfterMove(s, moved, own, seen, stop)) return r;
+      }
+      if (stop) continue;
+      for (const CFGBlock::AdjacentBlock& succ : b->succs())
+        if (const CFGBlock* n = succ.getReachableBlock(); n != nullptr && visited.insert(n).second)
+          todo.push_back({n, 0});
+    }
+    return std::nullopt;
+  }
+
+  Reason ownDestructor(QualType t, const std::string& what) const {
+    const CXXRecordDecl* rd = t.getNonReferenceType()->getAsCXXRecordDecl();
+    if (rd == nullptr || !rd->hasDefinition()) return std::nullopt;
+    std::vector<const CXXRecordDecl*> todo{rd->getDefinition()};
+    while (!todo.empty()) {
+      const CXXRecordDecl* r = todo.back();
+      todo.pop_back();
+      if (const CXXDestructorDecl* d = r->getDestructor(); d != nullptr && d->isUserProvided())
+        return what + " out of " + recordName(*rd->getDefinition()) + ", which has a user-provided destructor";
+      for (const CXXBaseSpecifier& b : r->bases())
+        if (const CXXRecordDecl* base = b.getType()->getAsCXXRecordDecl(); base && base->hasDefinition())
+          todo.push_back(base->getDefinition());
+    }
+    return std::nullopt;
+  }
+
+  // Förekomster i s av vägar som överlappar den flyttade. `stop` sätts vid en
+  // tilldelning till den flyttade vägen eller något som rymmer den.
+  Reason usesAfterMove(const Stmt* s, const Path& moved, const std::set<const DeclRefExpr*>& own,
+                       std::map<const DeclRefExpr*, bool>& seen, bool& stop) {
+    Reason found;
+    std::function<void(const Stmt*)> walk = [&](const Stmt* x) {
+      if (x == nullptr || found || stop) return;
+      if (const auto* dr = dyn_cast<DeclRefExpr>(x); dr != nullptr && !own.contains(dr)) {
+        if (auto it = seen.find(dr); it != seen.end()) {
+          if (it->second) stop = true;
+          return;
+        }
+        bool kill = false;
+        found = useAfterMove(dr, moved, own, kill);
+        seen[dr] = kill;
+        if (kill) stop = true;
+        return;
+      }
+      if (const auto* l = dyn_cast<LambdaExpr>(x)) walk(l->getBody());
+      for (const Stmt* c : x->children()) walk(c);
+    };
+    walk(s);
+    return found;
+  }
+
+  Reason useAfterMove(const DeclRefExpr* dr, const Path& moved, const std::set<const DeclRefExpr*>& own, bool& kill) {
+    const std::string what = "std::move(" + moved.text + ")";
+    const ValueDecl* d = dr->getDecl();
+    if (closureOf(d, moved.root)) return "'" + d->getNameAsString() + "' is used after " + what;
+    bool relevant = d == moved.root;
+    if (const auto* vd = dyn_cast<VarDecl>(d))
+      if (auto it = refs_.find(vd); it != refs_.end() && it->second.root == moved.root) relevant = true;
+    if (const auto* bd = dyn_cast<BindingDecl>(d)) {
+      if (auto it = bindingPaths_.find(bd); it != bindingPaths_.end()) {
+        relevant = relevant || it->second.root == moved.root;
+      } else if (const auto* dd = dyn_cast_or_null<VarDecl>(bd->getDecomposedDecl())) {
+        auto ref = refs_.find(dd);
+        relevant = relevant || dd == moved.root || (ref != refs_.end() && ref->second.root == moved.root);
+      }
+    }
+    if (!relevant) return std::nullopt;
+    const Expr* top = largestPath(dr);
+    std::optional<Path> q = pathOf(top);
+    if (!q) return "'" + d->getNameAsString() + "' is used after " + what;
+    // v[i].f: vilket element är okänt, så varje väg i roten överlappar.
+    if (!moved.open && !q->overlaps(moved)) return std::nullopt;
+    bool whole = !q->open && (moved.open ? q->fields.empty() : q->fields.size() <= moved.fields.size());
+    if (const Expr* rhs = whole ? assignedFrom(top) : nullptr) {
+      std::map<const DeclRefExpr*, bool> inner;
+      bool ignored = false;
+      if (auto r = usesAfterMove(rhs, moved, own, inner, ignored)) return r;
+      kill = true;
+      return std::nullopt;
+    }
+    return "'" + q->text + "' is used after " + what;
+  }
+
+  // Är e målet för en hel tilldelning (`e = x`: inbyggd, eller operator= som
+  // är implicit/defaulted eller från std)? Då högerledet, annars nullptr.
+  const Expr* assignedFrom(const Expr* e) const {
+    auto& ctx = const_cast<ASTContext&>(types_.context());
+    auto parents = ctx.getParents(*e);
+    const Expr* up = parents.size() == 1 ? parents[0].get<Expr>() : nullptr;
+    if (const auto* bo = dyn_cast_or_null<BinaryOperator>(up);
+        bo != nullptr && bo->getOpcode() == BO_Assign && stripNoOp(bo->getLHS()) == e)
+      return bo->getRHS();
+    const auto* oc = dyn_cast_or_null<CXXOperatorCallExpr>(up);
+    if (oc == nullptr || oc->getOperator() != OO_Equal || oc->getNumArgs() != 2 || stripNoOp(oc->getArg(0)) != e)
+      return nullptr;
+    const auto* md = dyn_cast_or_null<CXXMethodDecl>(oc->getDirectCallee());
+    if (md == nullptr) return nullptr;
+    bool system = ctx.getSourceManager().isInSystemHeader(md->getLocation());
+    if (!system && md->isUserProvided()) return nullptr;
+    return oc->getArg(1);
   }
 
   // STN-57/72: ordningen mellan operander och argument är ospecificerad, så
@@ -3674,6 +3867,9 @@ class Checker {
   std::map<const VarDecl*, Path> refs_;    // lokala referenser -> vad de är bundna till
   std::map<const BindingDecl*, Path> bindingPaths_;
   std::map<const Stmt*, std::set<const VarDecl*>> liveAfter_;  // se setLiveness
+  const FunctionDecl* moveFunction_ = nullptr;                   // STN-96: funktionen vars CFG söks
+  std::unique_ptr<AnalysisDeclContextManager> moveCfgManager_;   // äger moveCfg_
+  const CFG* moveCfg_ = nullptr;
   bool refReturn_ = false;                 // se allowRefReturn
   bool thisReturn_ = false;                // STN-73: return *this som C&
   bool memberRef_ = false;                 // STN-76: T& in i *this
@@ -3947,7 +4143,7 @@ Reason checkFunction(const FunctionDecl& fd, const TrustList& trust,
   if (thisReturn) checker.allowThisReturn();
   if (memberRef) checker.allowMemberRef();
   if (auto maybe = maybeUnassignedLocals(fd)) checker.allowUnassigned(fd, std::move(*maybe));
-  checker.setLiveness(liveAfterStatements(fd));
+  checker.setLiveness(fd, liveAfterStatements(fd));
   if (const auto* ctor = dyn_cast<CXXConstructorDecl>(&fd))
     if (auto r = checker.ctorInits(*ctor)) return r;
   for (const ParmVarDecl* p : fd.parameters())  // STN-68: värdeparametrar förstörs

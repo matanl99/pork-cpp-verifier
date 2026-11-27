@@ -165,7 +165,7 @@ int self_move() {
 
 // Ett flyttat objekt läses inte (STN-57 gäller som förut hos anroparen).
 // rules: STN-72, STN-57
-// expect: not-stone: 'a' is used after std::move(a)
+// expect: not-stone: 'a.copies' is used after std::move(a)
 int read_after_move() {
   Label a{{1}};
   Label b = std::move(a);
