@@ -620,9 +620,7 @@ std::move(p.namn); p.stad += "s";`). A path through an element (`v[i].f`)
 shall keep the rule of STN-57 (the root is not used after the call), since
 the element is unknown. A move that the search reaches again without such
 an assignment is in a loop and shall be rejected. Where x is a field, the
-classes that contain it (the root's type and each field on the way, and
-their bases) shall have no user-provided destructor, which would see the
-moved field. A path that may have been moved counts as moved: a move in one
+destructors of the classes that contain it are decided by STN-102. A path that may have been moved counts as moved: a move in one
 branch followed by a use after the branches is rejected unless every branch
 assigns. Otherwise `'y' is used after std::move(x)`, `std::move(x) in a
 loop` or `std::move(x) out of C, which has a user-provided destructor`.
@@ -641,6 +639,16 @@ A call without arguments that summaries/std.txt marks `resets` (`clear`:
 no precondition, `a.empty()` afterwards) on the moved path, or on a path that
 holds it, ends the move like a whole assignment (STN-96); later uses are
 permitted. Any other call on the moved path counts as a use.
+
+STN-102  Destructors that see a moved field
+Where x in `std::move(x)` is a field, whether the root is used afterwards or
+not, no user-provided destructor of a class that contains it (the root's type,
+each field's type on the way, the class that declares each field, and their
+bases) shall be able to read x: every `this` in its body shall be the base of
+a chain of fields that is neither a prefix of the rest of the path nor
+extended by it. A method call, `*this` or a destructor without a body counts
+as reading everything. Otherwise `std::move(x) out of C, whose destructor may
+read it`. Destroying the moved field itself is permitted.
 
 STN-58  Local iterators
 A local iterator is a loan value (STN-39); it may be initialised by any

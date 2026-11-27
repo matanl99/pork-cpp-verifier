@@ -2,8 +2,9 @@
 // ospecificerad. Resten av objektet (syskonfälten) får användas som vanligt;
 // den flyttade vägen och allt som rymmer den (hela objektet) får inte
 // användas förrän vägen tilldelats igen. Roten ska vara en lokal variabel
-// eller värdeparameter, vägen bara fält (inga index), och typerna som rymmer
-// vägen ska sakna egen destruktor. Kanske flyttad räknas som flyttad: en
+// eller värdeparameter och vägen bara fält (inga index); en egen destruktor i
+// typerna som rymmer vägen får inte läsa den (STN-102, korpus 150). Kanske
+// flyttad räknas som flyttad: en
 // flytt i en gren eller loop följt av en användning underkänns.
 #include <string>
 #include <utility>
@@ -209,8 +210,9 @@ struct Named {
   ~Named() {}
 };
 
-// rules: STN-96
-// expect: not-stone: std::move(n.namn) out of Named, which has a user-provided destructor
+// ~Named() läser inget fält (STN-102).
+// rules: STN-96, STN-102
+// expect: stone: assuming
 int own_destructor() {
   Named n{"Anna", "Lund"};
   std::string namn = std::move(n.namn);
@@ -324,8 +326,8 @@ struct Household {
   int x;
 };
 
-// rules: STN-96
-// expect: not-stone: std::move(h.n.namn) out of Named, which has a user-provided destructor
+// rules: STN-96, STN-102
+// expect: stone: assuming
 int inner_destructor() {
   Household h{{"Anna", "Lund"}, 1};
   std::string n = std::move(h.n.namn);

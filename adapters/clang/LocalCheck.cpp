@@ -2693,6 +2693,8 @@ class Checker {
       if (auto r = movedFromSource(call, arg, *p, *parm)) return r;
       return expr(arg);
     }
+    // STN-102: destruktorerna som körs när roten dör ser det flyttade fältet.
+    if (auto r = destructorsMayRead(*p, root->getType())) return r;
     auto it = liveAfter_.find(call);
     if (it == liveAfter_.end())
       return "cannot tell whether '" + root->getNameAsString() + "' is used after std::move";
@@ -2757,10 +2759,6 @@ class Checker {
   Reason usedAfterMove(const Expr* call, const Path& moved) {
     const auto* root = cast<VarDecl>(moved.root);
     const std::string what = "std::move(" + moved.text + ")";
-    for (std::size_t i = 0; i < moved.fields.size(); ++i) {  // typerna som rymmer vägen
-      QualType t = i == 0 ? root->getType() : moved.fields[i - 1]->getType();
-      if (auto r = ownDestructor(t, what)) return r;
-    }
     const CFG* cfg = moveCfg();
     if (cfg == nullptr) return "cannot tell whether '" + root->getNameAsString() + "' is used after std::move";
     std::set<const DeclRefExpr*> own;
@@ -2801,20 +2799,75 @@ class Checker {
     return std::nullopt;
   }
 
-  Reason ownDestructor(QualType t, const std::string& what) const {
-    const CXXRecordDecl* rd = t.getNonReferenceType()->getAsCXXRecordDecl();
-    if (rd == nullptr || !rd->hasDefinition()) return std::nullopt;
-    std::vector<const CXXRecordDecl*> todo{rd->getDefinition()};
-    while (!todo.empty()) {
-      const CXXRecordDecl* r = todo.back();
-      todo.pop_back();
-      if (const CXXDestructorDecl* d = r->getDestructor(); d != nullptr && d->isUserProvided())
-        return what + " out of " + recordName(*rd->getDefinition()) + ", which has a user-provided destructor";
-      for (const CXXBaseSpecifier& b : r->bases())
-        if (const CXXRecordDecl* base = b.getType()->getAsCXXRecordDecl(); base && base->hasDefinition())
-          todo.push_back(base->getDefinition());
+  // STN-102: för varje typ som rymmer den flyttade vägen (roten, sedan fälten)
+  // och dess baser: en egen destruktor får inte kunna läsa resten av vägen.
+  Reason destructorsMayRead(const Path& moved, QualType rootType) const {
+    const std::string what = "std::move(" + moved.text + ")";
+    for (std::size_t i = 0; i < moved.fields.size(); ++i) {
+      // Typen längs vägen, och klassen som äger fältet: efter ett index
+      // (v[0].namn) är typen behållaren, men elementets destruktor körs också.
+      QualType t = i == 0 ? rootType : moved.fields[i - 1]->getType();
+      std::vector<const FieldDecl*> rest(moved.fields.begin() + static_cast<std::ptrdiff_t>(i), moved.fields.end());
+      std::vector<const CXXRecordDecl*> todo;
+      const CXXRecordDecl* owners[] = {t.getNonReferenceType()->getAsCXXRecordDecl(), dyn_cast<CXXRecordDecl>(moved.fields[i]->getParent())};
+      for (const CXXRecordDecl* rd : owners)
+        if (rd != nullptr && rd->hasDefinition()) todo.push_back(rd->getDefinition());
+      if (todo.empty()) continue;
+      const CXXRecordDecl* rd = todo.front();
+      while (!todo.empty()) {
+        const CXXRecordDecl* r = todo.back();
+        todo.pop_back();
+        if (const CXXDestructorDecl* d = r->getDestructor(); d != nullptr && d->isUserProvided() && mayRead(*d, rest))
+          return what + " out of " + recordName(*rd->getDefinition()) + ", whose destructor may read it";
+        for (const CXXBaseSpecifier& b : r->bases())
+          if (const CXXRecordDecl* base = b.getType()->getAsCXXRecordDecl(); base && base->hasDefinition())
+            todo.push_back(base->getDefinition());
+      }
     }
     return std::nullopt;
+  }
+
+  // Kan destruktorn d läsa vägen `rest` i *this? Varje `this` ska vara basen i
+  // en kedja av fält; kedjan får inte överlappa rest (den ena ett prefix av den
+  // andra). Annan användning av this (metodanrop, *this som argument) och en
+  // destruktor utan kropp räknas som läsning.
+  bool mayRead(const CXXDestructorDecl& d, const std::vector<const FieldDecl*>& rest) const {
+    const FunctionDecl* def = nullptr;
+    if (!d.hasBody(def) || def->getBody() == nullptr) return true;
+    auto& ctx = const_cast<ASTContext&>(types_.context());
+    bool found = false;
+    std::function<void(const Stmt*)> walk = [&](const Stmt* s) {
+      if (s == nullptr || found) return;
+      if (isa<CXXThisExpr>(s)) {
+        std::vector<const FieldDecl*> chain;
+        const Stmt* cur = s;
+        for (;;) {
+          auto parents = ctx.getParents(*cur);
+          const Stmt* up = parents.size() == 1 ? parents[0].get<Stmt>() : nullptr;
+          if (const auto* ic = dyn_cast_or_null<ImplicitCastExpr>(up);
+              ic != nullptr && (ic->getCastKind() == CK_UncheckedDerivedToBase || ic->getCastKind() == CK_DerivedToBase ||
+                                ic->getCastKind() == CK_NoOp)) {
+            cur = up;
+            continue;
+          }
+          const auto* me = dyn_cast_or_null<MemberExpr>(up);
+          const auto* f = me ? dyn_cast<FieldDecl>(me->getMemberDecl()) : nullptr;
+          if (f == nullptr) break;
+          chain.push_back(f);
+          cur = up;
+        }
+        if (chain.empty()) {
+          found = true;  // metodanrop eller *this
+          return;
+        }
+        std::size_t n = std::min(chain.size(), rest.size());
+        found = std::equal(chain.begin(), chain.begin() + static_cast<std::ptrdiff_t>(n), rest.begin());
+        return;
+      }
+      for (const Stmt* c : s->children()) walk(c);
+    };
+    walk(def->getBody());
+    return found;
   }
 
   // Förekomster i s av vägar som överlappar den flyttade. `stop` sätts vid en
