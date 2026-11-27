@@ -353,6 +353,9 @@ class Builder {
 
   static void append(FlowValues& to, const FlowValues& from) { to.insert(to.end(), from.begin(), from.end()); }
 
+  // Posten vars standardinitierare evalueras under en initieringslista (B1).
+  const RecordDecl* listRecord_ = nullptr;
+
   FlowValues eval(const Expr* e) {
     if (e == nullptr) return {};
     e = e->IgnoreParens();
@@ -371,6 +374,30 @@ class Builder {
       return {};
     }
     if (const auto* d = dyn_cast<CXXDefaultArgExpr>(e)) return eval(d->getExpr());
+    // STN-104: i en standardinitierare under en initieringslista är implicit
+    // this objektet som listan initierar, inte metodens. Ett fält i det läses
+    // ur ett tidigare element i listan, och aggregatet läses som unionen av
+    // elementen: värdet finns redan med (B1).
+    if (const auto* m = dyn_cast<MemberExpr>(e); m != nullptr && listRecord_ != nullptr)
+      if (const auto* t = dyn_cast<CXXThisExpr>(m->getBase()->IgnoreParenImpCasts()); t != nullptr && t->isImplicit())
+        if (const auto* f = dyn_cast<FieldDecl>(m->getMemberDecl()); f != nullptr && f->getParent() == listRecord_)
+          return {};
+    if (const auto* list = dyn_cast<InitListExpr>(e)) {
+      FlowValues v;
+      for (const Expr* init : list->inits()) {
+        const auto* d = dyn_cast<CXXDefaultInitExpr>(init);
+        if (d == nullptr) {
+          append(v, eval(init));
+          continue;
+        }
+        const RecordDecl* saved = listRecord_;
+        listRecord_ = d->getField()->getParent();
+        append(v, eval(d->getExpr()));
+        listRecord_ = saved;
+      }
+      if (const Expr* filler = list->getArrayFiller()) append(v, eval(filler));
+      return v;
+    }
     if (const auto* d = dyn_cast<CXXDefaultInitExpr>(e)) return eval(d->getExpr());
     if (const auto* op = dyn_cast<CXXOperatorCallExpr>(e); op != nullptr && op->getOperator() == OO_Subscript) {
       if (auto p = place(op)) {
